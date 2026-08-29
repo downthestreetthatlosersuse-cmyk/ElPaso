@@ -22,24 +22,25 @@ interface WeaponDef {
   kick: number;
   pitchKick: number;
   rollKick: number;
+  fovKick: number;
   sound: () => void;
 }
 
 const WEAPONS: WeaponDef[] = [
-  { name: "RATTLER SMG", kind: "hitscan", dmg: 11, rate: 0.095, magSize: 32, spread: 0.024, pellets: 1, reloadTime: 1.5, recoil: 0.3, kick: 0.014, pitchKick: 1.35, rollKick: 0.5, sound: () => sfx.smg() },
-  { name: "JUDGE MAGNUM", kind: "hitscan", dmg: 62, rate: 0.42, magSize: 6, spread: 0.005, pellets: 1, reloadTime: 1.9, recoil: 1.2, kick: 0.06, pitchKick: 5.2, rollKick: 2.6, sound: () => sfx.magnum() },
-  { name: "PUMPER-8", kind: "hitscan", dmg: 11, rate: 0.78, magSize: 8, spread: 0.06, pellets: 8, reloadTime: 2.2, recoil: 0.95, kick: 0.05, pitchKick: 4.2, rollKick: 2.2, sound: () => sfx.shotgun() },
-  { name: "BOOMSTICK", kind: "rocket", dmg: 130, rate: 1.0, magSize: 1, spread: 0.004, pellets: 1, reloadTime: 2.4, recoil: 1.4, kick: 0.09, pitchKick: 6.5, rollKick: 3.4, sound: () => sfx.launch() },
+  { name: "RATTLER SMG", kind: "hitscan", dmg: 12, rate: 0.08, magSize: 36, spread: 0.023, pellets: 1, reloadTime: 1.25, recoil: 0.3, kick: 0.013, pitchKick: 1.3, rollKick: 0.5, fovKick: 0.4, sound: () => sfx.smg() },
+  { name: "JUDGE MAGNUM", kind: "hitscan", dmg: 70, rate: 0.36, magSize: 6, spread: 0.004, pellets: 1, reloadTime: 1.6, recoil: 1.2, kick: 0.06, pitchKick: 5.0, rollKick: 2.6, fovKick: 1.6, sound: () => sfx.magnum() },
+  { name: "PUMPER-8", kind: "hitscan", dmg: 12, rate: 0.68, magSize: 8, spread: 0.058, pellets: 8, reloadTime: 1.9, recoil: 0.95, kick: 0.045, pitchKick: 4.0, rollKick: 2.2, fovKick: 2.0, sound: () => sfx.shotgun() },
+  { name: "BOOMSTICK", kind: "rocket", dmg: 150, rate: 0.85, magSize: 1, spread: 0.004, pellets: 1, reloadTime: 2.0, recoil: 1.4, kick: 0.08, pitchKick: 6.2, rollKick: 3.2, fovKick: 2.6, sound: () => sfx.launch() },
 ];
 
 const ENEMY_DEFS: Record<
   EnemyKind,
   { hp: number; speed: number; dmg: number; score: number; radius: number }
 > = {
-  grunt: { hp: 26, speed: 3.3, dmg: 8, score: 100, radius: 0.7 },
-  spitter: { hp: 44, speed: 2.7, dmg: 12, score: 150, radius: 0.75 },
-  brute: { hp: 130, speed: 1.7, dmg: 22, score: 300, radius: 1.2 },
-  boss: { hp: 720, speed: 1.9, dmg: 30, score: 1500, radius: 1.9 },
+  grunt: { hp: 26, speed: 4.4, dmg: 8, score: 100, radius: 0.7 },
+  spitter: { hp: 44, speed: 3.5, dmg: 12, score: 150, radius: 0.75 },
+  brute: { hp: 130, speed: 2.3, dmg: 22, score: 300, radius: 1.2 },
+  boss: { hp: 720, speed: 2.5, dmg: 30, score: 1500, radius: 1.9 },
 };
 
 const STREAKS: [number, string][] = [
@@ -205,6 +206,10 @@ export class Game {
   private streakT = 0;
   /* rockets */
   private rockets: { g: THREE.Group; vel: THREE.Vector3; active: boolean; life: number; spin: number }[] = [];
+  /* feel: fov punch, hitstop, footsteps */
+  private fovKick = 0;
+  private freeze = 0;
+  private stepAcc = 0;
   /* ufo drop event */
   private ufoEvt = -1;
   private ufoEvtSpawned = false;
@@ -1692,7 +1697,7 @@ export class Game {
 
   private updatePlayer(dt: number) {
     const sprint = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
-    const speed = sprint ? 9 : 6;
+    const speed = sprint ? 11.5 : 7.6;
     const fwd = (this.keys.has("KeyW") ? 1 : 0) - (this.keys.has("KeyS") ? 1 : 0);
     const str = (this.keys.has("KeyD") ? 1 : 0) - (this.keys.has("KeyA") ? 1 : 0);
     const fx = -Math.sin(this.yaw);
@@ -1706,12 +1711,12 @@ export class Game {
       wx = (wx / wl) * speed;
       wz = (wz / wl) * speed;
     }
-    const accel = this.onGround ? 14 : 4;
+    const accel = this.onGround ? 19 : 5;
     this.vel.x += (wx - this.vel.x) * Math.min(1, accel * dt);
     this.vel.z += (wz - this.vel.z) * Math.min(1, accel * dt);
     this.vel.y -= 22 * dt;
     if (this.keys.has("Space") && this.onGround) {
-      this.vel.y = 8.2;
+      this.vel.y = 9;
       this.onGround = false;
       sfx.jump();
     }
