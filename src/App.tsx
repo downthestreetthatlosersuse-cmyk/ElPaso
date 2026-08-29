@@ -428,12 +428,10 @@ export default function App() {
       {h.state === "playing" && h.health <= 30 && h.health > 0 && <div className="absolute inset-0 lowhp pointer-events-none z-30" />}
       {h.nukeId > 0 && h.state === "playing" && <div key={`n${h.nukeId}`} className="absolute inset-0 nuke-flash pointer-events-none z-30" />}
 
-      {/* CRT layers */}
-      <div className="pointer-events-none absolute inset-0 scanlines z-[45]" />
+      {/* CRT layers — scanlines/vignette are now in the post shader */}
       <div className="pointer-events-none absolute inset-0 z-[45] overflow-hidden">
         <div className="crt-roll" />
       </div>
-      <div className="pointer-events-none absolute inset-0 crt-vignette z-[46]" />
 
       {/* screens */}
       {h.state === "menu" && <MenuScreen h={h} onStart={start} />}

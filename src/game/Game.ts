@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { sfx } from "./audio";
 import { hud } from "./store";
+import { createPostFX, type PostFX } from "./postfx";
 
 /* internal render resolution — chunky 480i-style pixels */
 const W = 640;
@@ -183,6 +184,7 @@ export class Game {
   private raf = 0;
   private disposed = false;
   private radar: HTMLCanvasElement | null;
+  private post!: PostFX;
 
   /* input / state */
   private keys = new Set<string>();
@@ -338,6 +340,10 @@ export class Game {
     });
     this.pMesh.userData.noShadow = true;
     this.enableShadows();
+    /* cinematic post pipeline: god rays, bloom, reactive CRT */
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.12;
+    this.post = createPostFX(this.renderer, this.scene, this.camera, W, H, new THREE.Vector3(-160, 62, -250));
     this.hudSync();
     this.loop();
   }
@@ -1807,6 +1813,7 @@ export class Game {
     this.freeze = Math.max(this.freeze, e.boss ? 0.09 : e.kind === "brute" ? 0.05 : 0.028);
     this.fovKick += e.boss ? 2 : e.kind === "brute" ? 1.2 : 0.5;
     this.fireEventLight(p.x, 1.6, p.z, e.boss ? 0xc05aff : 0x8dff3a, e.boss ? 260 : e.kind === "brute" ? 170 : 80, 0.3);
+    this.post.pulseKill(e.boss || e.kind === "brute");
     /* goo splat decals */
     const splats = e.kind === "brute" ? 3 : 2;
     for (let i = 0; i < splats; i++) {
@@ -2294,6 +2301,7 @@ export class Game {
     this.shake += 0.5;
     sfx.hurt();
     hud.dmg();
+    this.post.pulseDamage();
     hud.feed(`HIT BY ${source}  -${d} HP`, "#ff5a5a");
     this.hudSync();
     if (this.health <= 0) this.gameOver();
@@ -3012,6 +3020,7 @@ export class Game {
   private nukeBlast() {
     hud.set({ nukeId: hud.get().nukeId + 1 });
     sfx.nuke();
+    this.post.flashNuke();
     this.shake += 1.4;
     this.fireEventLight(this.pos.x, 3, this.pos.z, 0xfff2c8, 520, 0.9);
     this.spawnRing(this.pos, 0xfff2c8, 22, 0.9);
@@ -3269,10 +3278,16 @@ export class Game {
       this.updateViewmodel(0);
     }
 
-    this.renderer.render(this.scene, this.camera);
+    this.post.setLowHp(this.health <= 35 ? Math.min(1, 1 - this.health / 35) : 0);
+    this.post.setFreeze(this.freeze > 0 && this.state === "playing");
+    this.post.update(dt, this.camera);
+    this.post.composer.render();
   };
 
   dispose() {
+    this.disposed = true;
+    cancelAnimationFrame(this.raf);
+    this.post.dispose();
     this.disposed = true;
     cancelAnimationFrame(this.raf);
     window.removeEventListener("keydown", this.onKeyDown);
