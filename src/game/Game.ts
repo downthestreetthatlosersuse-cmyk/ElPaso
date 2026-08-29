@@ -30,10 +30,10 @@ interface WeaponDef {
 }
 
 const WEAPONS: WeaponDef[] = [
-  { name: "RATTLER SMG", kind: "hitscan", dmg: 12, rate: 0.08, magSize: 36, spread: 0.023, pellets: 1, reloadTime: 1.25, recoil: 0.3, kick: 0.022, kickR: 0.008, bloomKick: 0.05, pitchKick: 1.3, rollKick: 0.5, fovKick: 0.4, sound: () => sfx.smg() },
-  { name: "JUDGE MAGNUM", kind: "hitscan", dmg: 70, rate: 0.36, magSize: 6, spread: 0.004, pellets: 1, reloadTime: 1.6, recoil: 1.2, kick: 0.07, kickR: 0.05, bloomKick: 0.3, pitchKick: 5.0, rollKick: 2.6, fovKick: 1.6, sound: () => sfx.magnum() },
-  { name: "PUMPER-8", kind: "hitscan", dmg: 12, rate: 0.68, magSize: 8, spread: 0.058, pellets: 8, reloadTime: 1.9, recoil: 0.95, kick: 0.055, kickR: 0.04, bloomKick: 0.36, pitchKick: 4.0, rollKick: 2.2, fovKick: 2.0, sound: () => sfx.shotgun() },
-  { name: "BOOMSTICK", kind: "rocket", dmg: 150, rate: 0.85, magSize: 1, spread: 0.004, pellets: 1, reloadTime: 2.0, recoil: 1.4, kick: 0.095, kickR: 0.06, bloomKick: 0.45, pitchKick: 6.2, rollKick: 3.2, fovKick: 2.6, sound: () => sfx.launch() },
+  { name: "RATTLER SMG", kind: "hitscan", dmg: 12, rate: 0.08, magSize: 36, spread: 0.023, pellets: 1, reloadTime: 1.25, recoil: 0.3, kick: 0.05, kickR: 0.02, bloomKick: 0.05, pitchKick: 1.3, rollKick: 0.5, fovKick: 0.4, sound: () => sfx.smg() },
+  { name: "JUDGE MAGNUM", kind: "hitscan", dmg: 70, rate: 0.36, magSize: 6, spread: 0.004, pellets: 1, reloadTime: 1.6, recoil: 1.2, kick: 0.16, kickR: 0.11, bloomKick: 0.3, pitchKick: 5.0, rollKick: 2.6, fovKick: 1.6, sound: () => sfx.magnum() },
+  { name: "PUMPER-8", kind: "hitscan", dmg: 12, rate: 0.68, magSize: 8, spread: 0.058, pellets: 8, reloadTime: 1.9, recoil: 0.95, kick: 0.13, kickR: 0.09, bloomKick: 0.36, pitchKick: 4.0, rollKick: 2.2, fovKick: 2.0, sound: () => sfx.shotgun() },
+  { name: "BOOMSTICK", kind: "rocket", dmg: 150, rate: 0.85, magSize: 1, spread: 0.004, pellets: 1, reloadTime: 2.0, recoil: 1.4, kick: 0.2, kickR: 0.13, bloomKick: 0.45, pitchKick: 6.2, rollKick: 3.2, fovKick: 2.6, sound: () => sfx.launch() },
 ];
 
 const ENEMY_DEFS: Record<
@@ -2463,7 +2463,7 @@ export class Game {
     if (w.rollKick >= 2) {
       this.rollSign *= -1;
       this.gunRoll = w.rollKick * 0.03 * this.rollSign;
-      this.shake += w.kind === "rocket" ? 0.2 : 0.12;
+      this.shake += w.kind === "rocket" ? 0.4 : 0.25;
     }
     w.sound();
     if (w.kind !== "rocket") this.casing();
@@ -2566,8 +2566,8 @@ export class Game {
   private damagePlayer(d: number, source: string) {
     if (this.state !== "playing") return;
     this.health = Math.max(0, this.health - d);
-    this.shake += 0.5;
-    this.shakeR += 0.05;
+    this.shake += 0.8;
+    this.shakeR += 0.1;
     sfx.hurt();
     hud.dmg();
     this.post.pulseDamage();
@@ -2691,9 +2691,9 @@ export class Game {
     if (this.pos.y <= 0) {
       if (!this.onGround && this.vel.y < -6) {
         sfx.land();
-        this.burst(this.v1.set(this.pos.x, 0.15, this.pos.z), 0xc4a06a, 7, 2.2);
-        this.shake += 0.24;
-        this.shakeR += 0.03;
+        this.burst(this.v1.set(this.pos.x, 0.15, this.pos.z), 0xc4a06a, 9, 2.6);
+        this.shake += 0.5;
+        this.shakeR += 0.07;
       }
       this.pos.y = 0;
       this.vel.y = 0;
@@ -2728,10 +2728,10 @@ export class Game {
       }
     }
 
-    this.shake = Math.max(0, this.shake - dt * 2.6);
-    /* sprint adds a faint constant rattle; impacts stack on top */
-    const sprintRattle = sprint && horiz > 6 ? 0.016 : 0;
-    const sh = this.shake * this.shake * 0.35 + sprintRattle;
+    this.shake = Math.max(0, this.shake - dt * 3.4);
+    /* sprint adds a constant rattle; impacts stack on top */
+    const sprintRattle = sprint && horiz > 6 ? 0.035 : 0;
+    const sh = this.shake * this.shake * 0.6 + sprintRattle;
     const sr = this.shakeR;
     const breathe = Math.sin(this.clock.elapsedTime * 1.7) * 0.01;
     this.camera.position.set(
@@ -2740,9 +2740,9 @@ export class Game {
       this.pos.z + rand(-sh, sh)
     );
     this.camera.rotation.set(
-      this.pitch + this.recoilKick * 0.022 + breathe * 0.25 + rand(-sh, sh) * 0.4 + rand(-sr, sr) * 0.5,
-      this.yaw + rand(-sr, sr) * 0.35,
-      rand(-sh, sh) * 0.3 + rand(-sr, sr) * 0.6
+      this.pitch + this.recoilKick * 0.022 + breathe * 0.25 + rand(-sh, sh) * 0.4 + rand(-sr, sr) * 0.75,
+      this.yaw + rand(-sr, sr) * 0.5,
+      rand(-sh, sh) * 0.3 + rand(-sr, sr) * 0.85
     );
 
     /* weapon timers */
@@ -2896,7 +2896,8 @@ export class Game {
             if (!e.chargeHit && dist < e.radius + 1.3) {
               e.chargeHit = true;
               this.damagePlayer(Math.round(e.dmg * 1.5), e.boss ? "EL JEFE" : "BRUTE CHARGE");
-              this.shake += 0.45;
+              this.shake += 0.7;
+              this.shakeR += 0.08;
             }
             e.parts.body.rotation.z = Math.sin(e.chargeT * 42) * 0.09;
           } else {
@@ -3065,8 +3066,8 @@ export class Game {
     sfx.boom();
     sfx.crack();
     sfx.rumble();
-    this.shake += 1.5;
-    this.shakeR += 0.09;
+    this.shake += 2.2;
+    this.shakeR += 0.17;
     this.freeze = Math.max(this.freeze, 0.075);
     this.fovKick += 3.2;
     hud.set({ boomId: hud.get().boomId + 1 });
@@ -3321,7 +3322,8 @@ export class Game {
     hud.set({ nukeId: hud.get().nukeId + 1 });
     sfx.nuke();
     this.post.flashNuke();
-    this.shake += 1.4;
+    this.shake += 2.0;
+    this.shakeR += 0.2;
     this.fireEventLight(this.pos.x, 3, this.pos.z, 0xfff2c8, 400, 0.9);
     this.spawnRing(this.pos, 0xfff2c8, 22, 0.9);
     this.spawnRing(this.pos, 0xff9a2a, 14, 0.6);
