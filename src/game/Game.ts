@@ -334,6 +334,7 @@ export class Game {
     this.buildViewmodels();
     this.initPools();
     this.initDynamicLights();
+    this.initExplosions();
     this.bindEvents();
 
     this.spawnAttractCrowd();
@@ -1985,7 +1986,7 @@ export class Game {
 
   /* ------------------------------------------------ fx helpers */
 
-  private burst(pos: THREE.Vector3, color: number, count: number, speed: number) {
+  private burst(pos: THREE.Vector3, color: number, count: number, speed: number, grav = 10) {
     for (let i = 0; i < count; i++) {
       const p = this.particles[this.pIndex];
       this.pIndex = (this.pIndex + 1) % this.particles.length;
@@ -1995,7 +1996,7 @@ export class Game {
       p.maxLife = p.life = rand(0.35, 0.75);
       p.size = rand(0.7, 1.5);
       p.color.set(color);
-      p.grav = 10;
+      p.grav = grav;
     }
   }
 
@@ -3379,6 +3380,7 @@ export class Game {
       this.updateFX(dt);
       this.updateAmbient(dt);
       this.updateLights(dt);
+      this.updateExplosions(dt);
     } else if (this.state === "playing") {
       this.updatePlayer(dt);
       this.updateEnemies(dt);
