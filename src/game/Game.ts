@@ -628,9 +628,9 @@ export class Game {
     this.scene.add(dashes);
 
     /* plaza */
-    const plaza = new THREE.Mesh(new THREE.CircleGeometry(11, 18), new THREE.MeshLambertMaterial({ map: this.tex.plaza }));
+    const plaza = new THREE.Mesh(new THREE.CircleGeometry(8, 18), new THREE.MeshLambertMaterial({ map: this.tex.plaza }));
     plaza.rotation.x = -Math.PI / 2;
-    plaza.position.set(14, 0.018, -18);
+    plaza.position.set(18, 0.018, -15);
     this.scene.add(plaza);
   }
 
@@ -806,30 +806,68 @@ export class Game {
   }
 
   private buildProps() {
-    /* papel picado banners strung across the plaza and road */
+    /* festival poles — every picado line is anchored to one of these or a wall */
+    const pole = (x: number, z: number, h: number) => {
+      const g = new THREE.Group();
+      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, h, 6), this.mat.wood);
+      shaft.position.y = h / 2;
+      g.add(shaft);
+      const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.36, 0.14, 8), this.mat.dark);
+      foot.position.y = 0.07;
+      g.add(foot);
+      const knob = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 5), this.mat.brass);
+      knob.position.y = h;
+      g.add(knob);
+      g.position.set(x, 0, z);
+      this.scene.add(g);
+      this.addCollider(x, z, 0.22, 0.22);
+    };
+    pole(10, -8.5, 5.2);
+    pole(26.5, -9, 5.2);
+    pole(-20, -6, 5.0);
+    pole(20, -6, 5.0);
+
+    /* papel picado — rope from anchor to anchor, flags sagging beneath */
     const flagColors = [0xff6a2a, 0x2ec4b6, 0xffd23f, 0xe8384f, 0x8dff3a];
-    const picado = (x1: number, z1: number, x2: number, z2: number, h: number) => {
+    const picado = (x1: number, z1: number, x2: number, z2: number, h1: number, h2: number) => {
       const pts: THREE.Vector3[] = [];
       const N = 14;
       for (let i = 0; i <= N; i++) {
         const t = i / N;
-        pts.push(new THREE.Vector3(x1 + (x2 - x1) * t, h - Math.sin(t * Math.PI) * 1.3, z1 + (z2 - z1) * t));
+        pts.push(
+          new THREE.Vector3(
+            x1 + (x2 - x1) * t,
+            h1 + (h2 - h1) * t - Math.sin(t * Math.PI) * 1.25,
+            z1 + (z2 - z1) * t
+          )
+        );
       }
-      const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
-      this.scene.add(new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0x241208 })));
+      /* taut rope on the chord */
+      const a = this.v1.set(x1, h1, z1);
+      const b = this.v2.set(x2, h2, z2);
+      const dir = new THREE.Vector3().copy(b).sub(a);
+      const len = Math.max(0.5, dir.length());
+      const rope = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, len, 5), this.mat.dark);
+      rope.position.copy(a).addScaledVector(dir, 0.5);
+      rope.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+      this.scene.add(rope);
       for (let i = 1; i < N; i++) {
         const fm = new THREE.MeshBasicMaterial({ color: flagColors[i % flagColors.length], side: THREE.DoubleSide });
         const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.7), fm);
-        flag.position.copy(pts[i]).add(this.v1.set(0, -0.38, 0));
+        flag.position.copy(pts[i]).add(this.v3.set(0, -0.38, 0));
         flag.rotation.y = rand(-0.5, 0.5);
         flag.userData.i = this.picadoFlags.length;
         this.picadoFlags.push(flag);
         this.scene.add(flag);
       }
     };
-    picado(-11, -23.5, 11, -23.5, 5.6);
-    picado(-9, -36.5, 9, -36.5, 5.4);
-    picado(-7, 4.8, 7, 4.8, 5.2);
+    /* plaza corners: festival poles to the adobe building's corners */
+    picado(10, -8.5, 17.5, -25, 5.2, 5.0);
+    picado(26.5, -9, 17.5, -33, 5.2, 4.6);
+    /* wall-to-wall over the east-west boulevard */
+    picado(-12, -28.95, -14, 10.5, 4.8, 4.8);
+    /* pole-to-pole over the east-west boulevard */
+    picado(-20, -6, 20, -6, 5.0, 5.0);
 
     /* plaza fountain — the heart of the defense */
     const f = new THREE.Group();
@@ -848,9 +886,9 @@ export class Game {
     const top = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.08, 10), this.mat.water);
     top.position.y = 2.42;
     f.add(top);
-    f.position.set(0, 0, -30);
+    f.position.set(18, 0, -15);
     this.scene.add(f);
-    this.addCollider(0, -30, 3.4, 3.4);
+    this.addCollider(18, -15, 3.4, 3.4);
 
     /* taco carts at the plaza rim */
     const stall = (x: number, z: number, rot: number) => {
@@ -896,8 +934,8 @@ export class Game {
       this.scene.add(s);
       this.addCollider(x, z, 1.5, 0.9);
     };
-    stall(-8, -22.5, 0.1);
-    stall(8.5, -36.5, Math.PI + 0.15);
+    stall(9.5, -10.5, 2.05);
+    stall(26.5, -21, -0.96);
 
     /* parked pickups along the curb */
     const truck = (x: number, z: number, rot: number, body: THREE.Material) => {
@@ -952,9 +990,9 @@ export class Game {
       this.scene.add(b);
       this.addCollider(x, z, 1.0, 0.45);
     };
-    bench(-8.4, -30, Math.PI / 2);
-    bench(8.4, -30, -Math.PI / 2);
-    bench(0, -21.8, 0);
+    bench(11.2, -15, Math.PI / 2);
+    bench(25, -15, -Math.PI / 2);
+    bench(18, -7.4, Math.PI);
 
     /* chili ristras by the doorways */
     const ristra = (x: number, z: number) => {
