@@ -78,6 +78,15 @@ function Crosshair({ h }: { h: Hud }) {
             style={{ left: -8, top: -8, width: 16, height: 16, border: "2px solid #ffffff", boxShadow: "0 0 8px rgba(255,255,255,0.6)" }}
           />
         )}
+        {h.combo >= 2 && (
+          <div
+            key={h.combo}
+            className="combo-pop absolute left-1/2 font-display text-3xl"
+            style={{ top: "calc(50% + 34px)", color: h.combo >= 4 ? "#ff5a2a" : "#ff9a2a", textShadow: "0 2px 0 #4a180c, 0 0 18px rgba(255,120,30,0.7)" }}
+          >
+            x{Math.min(h.combo, 6)} COMBO
+          </div>
+        )}
       </div>
     </div>
   );

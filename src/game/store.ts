@@ -20,6 +20,7 @@ export interface Hud {
   kills: number;
   wave: number;
   enemiesLeft: number;
+  combo: number;
   best: number;
   bannerId: number;
   bannerText: string;
@@ -49,6 +50,7 @@ let s: Hud = {
   kills: 0,
   wave: 0,
   enemiesLeft: 0,
+  combo: 0,
   best: loadBest(),
   bannerId: 0,
   bannerText: "",

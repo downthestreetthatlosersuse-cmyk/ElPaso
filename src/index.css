@@ -248,6 +248,20 @@
   }
 }
 
+.combo-pop {
+  animation: combopop 0.28s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+@keyframes combopop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 8px) scale(2.2);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
 .blinker {
   animation: blink 1.1s steps(2) infinite;
 }

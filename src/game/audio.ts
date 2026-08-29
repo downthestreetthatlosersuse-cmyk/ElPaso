@@ -149,6 +149,20 @@ export const sfx = {
   jump() {
     osc("sine", 240, 520, 0.12, 0.16);
   },
+  portal() {
+    osc("sine", 1400, 220, 0.35, 0.3);
+    osc("sawtooth", 2200, 320, 0.3, 0.14);
+    noise(0.28, 0.2, 2600, 0, "highpass");
+  },
+  headshot() {
+    osc("square", 1800, 2400, 0.06, 0.2);
+    osc("square", 2400, 3100, 0.08, 0.16, 0.05);
+  },
+  boom() {
+    osc("sine", 120, 26, 0.7, 0.8);
+    noise(0.6, 0.5, 700);
+    osc("sawtooth", 60, 22, 0.8, 0.4, 0.04);
+  },
   land() {
     noise(0.08, 0.24, 480);
   },

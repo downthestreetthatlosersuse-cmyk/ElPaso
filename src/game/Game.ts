@@ -18,12 +18,14 @@ interface WeaponDef {
   reloadTime: number;
   recoil: number;
   kick: number;
+  pitchKick: number;
+  rollKick: number;
   sound: () => void;
 }
 
 const WEAPONS: WeaponDef[] = [
-  { name: "RATTLER SMG", dmg: 11, rate: 0.095, magSize: 32, spread: 0.022, reloadTime: 1.5, recoil: 0.34, kick: 0.016, sound: () => sfx.smg() },
-  { name: "JUDGE MAGNUM", dmg: 62, rate: 0.42, magSize: 6, spread: 0.005, reloadTime: 1.9, recoil: 1.0, kick: 0.055, sound: () => sfx.magnum() },
+  { name: "RATTLER SMG", dmg: 11, rate: 0.095, magSize: 32, spread: 0.024, reloadTime: 1.5, recoil: 0.3, kick: 0.014, pitchKick: 1.35, rollKick: 0.5, sound: () => sfx.smg() },
+  { name: "JUDGE MAGNUM", dmg: 62, rate: 0.42, magSize: 6, spread: 0.005, reloadTime: 1.9, recoil: 1.2, kick: 0.06, pitchKick: 5.2, rollKick: 2.6, sound: () => sfx.magnum() },
 ];
 
 const ENEMY_DEFS: Record<
@@ -75,6 +77,30 @@ interface Enemy {
   waypoint: THREE.Vector3 | null;
   parts: { body: THREE.Object3D; armL?: THREE.Object3D; armR?: THREE.Object3D; sac?: THREE.Object3D };
   hitMeshes: THREE.Mesh[];
+  hitPop: number;
+  baseScale: THREE.Vector3;
+}
+
+interface Decal {
+  mesh: THREE.Mesh;
+  mat: THREE.MeshBasicMaterial;
+  life: number;
+  maxLife: number;
+  active: boolean;
+}
+
+interface RingFX {
+  mesh: THREE.Mesh;
+  mat: THREE.MeshBasicMaterial;
+  t: number;
+  dur: number;
+  max: number;
+}
+
+interface BeamFX {
+  mesh: THREE.Mesh;
+  mat: THREE.MeshBasicMaterial;
+  t: number;
 }
 
 interface Projectile {
@@ -155,6 +181,23 @@ export class Game {
   private flashT = 0;
   private switchT = 0;
   private dryT = 0;
+  /* recoil springs */
+  private kickP = 0;
+  private kickPV = 0;
+  private kickR = 0;
+  private kickRV = 0;
+  private rollSign = 1;
+  /* combo */
+  private comboCount = 0;
+  private comboT = 0;
+  /* ambient */
+  private weeds: { g: THREE.Group; speed: number; baseZ: number; phase: number }[] = [];
+  private ufos: { g: THREE.Group; r: number; a: number; sp: number; h: number; lights: THREE.Mesh[] }[] = [];
+  private dust!: THREE.Points;
+  private dustBase!: Float32Array;
+  private decals: Decal[] = [];
+  private rings: RingFX[] = [];
+  private beams: BeamFX[] = [];
 
   /* world */
   private colliders: AABB[] = [];
@@ -713,6 +756,96 @@ export class Game {
       this.scene.add(sprite);
       this.texts.push({ sprite, mat, tex, canvas, life: 0 });
     }
+
+    /* impact / splat decals */
+    const decalGeo = new THREE.PlaneGeometry(1, 1);
+    for (let i = 0; i < 44; i++) {
+      const mat = new THREE.MeshBasicMaterial({ color: 0x111111, transparent: true, opacity: 0.8, depthWrite: false });
+      const mesh = new THREE.Mesh(decalGeo, mat);
+      mesh.visible = false;
+      mesh.renderOrder = 2;
+      this.scene.add(mesh);
+      this.decals.push({ mesh, mat, life: 0, maxLife: 1, active: false });
+    }
+
+    /* shockwave rings */
+    const ringGeo = new THREE.RingGeometry(0.72, 1, 26);
+    for (let i = 0; i < 10; i++) {
+      const mat = new THREE.MeshBasicMaterial({ color: 0x8dff3a, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending });
+      const mesh = new THREE.Mesh(ringGeo, mat);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.visible = false;
+      mesh.renderOrder = 3;
+      this.scene.add(mesh);
+      this.rings.push({ mesh, mat, t: 1, dur: 1, max: 1 });
+    }
+
+    /* spawn beams */
+    const beamGeo = new THREE.CylinderGeometry(0.7, 0.7, 7, 10, 1, true);
+    for (let i = 0; i < 6; i++) {
+      const mat = new THREE.MeshBasicMaterial({ color: 0x8dff3a, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending });
+      const mesh = new THREE.Mesh(beamGeo, mat);
+      mesh.visible = false;
+      mesh.renderOrder = 4;
+      this.scene.add(mesh);
+      this.beams.push({ mesh, mat, t: 1 });
+    }
+
+    /* tumbleweeds */
+    const weedGeo = new THREE.IcosahedronGeometry(0.5, 0);
+    const weedMat = new THREE.MeshBasicMaterial({ color: 0x9a7440, wireframe: true });
+    for (let i = 0; i < 4; i++) {
+      const g = new THREE.Group();
+      const outer = new THREE.Mesh(weedGeo, weedMat);
+      g.add(outer);
+      const inner = new THREE.Mesh(new THREE.IcosahedronGeometry(0.3, 0), weedMat);
+      inner.rotation.set(0.6, 0.4, 0);
+      g.add(inner);
+      g.position.set(rand(-90, 90), 0.5, rand(-80, 80));
+      this.scene.add(g);
+      this.weeds.push({ g, speed: rand(2.6, 4.6), baseZ: g.position.z, phase: rand(0, 9) });
+    }
+
+    /* alien motherships */
+    for (let i = 0; i < 2; i++) {
+      const g = new THREE.Group();
+      const hull = new THREE.Mesh(new THREE.CylinderGeometry(3.4, 4.6, 1.1, 12), this.lambert(0x2e3340));
+      g.add(hull);
+      const dome = new THREE.Mesh(
+        new THREE.SphereGeometry(1.7, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0x6a4aff, transparent: true, opacity: 0.55 })
+      );
+      dome.position.y = 0.55;
+      g.add(dome);
+      const lights: THREE.Mesh[] = [];
+      for (let l = 0; l < 6; l++) {
+        const lm = new THREE.Mesh(new THREE.SphereGeometry(0.2, 6, 5), new THREE.MeshBasicMaterial({ color: 0xff4a5a }));
+        const a = (l / 6) * Math.PI * 2;
+        lm.position.set(Math.cos(a) * 4, -0.35, Math.sin(a) * 4);
+        g.add(lm);
+        lights.push(lm);
+      }
+      this.scene.add(g);
+      this.ufos.push({ g, r: 52 + i * 20, a: i * 2.4, sp: (i === 0 ? 1 : -1) * rand(0.05, 0.08), h: 25 + i * 7, lights });
+    }
+
+    /* drifting dust motes */
+    const dustCount = 180;
+    const dustPos = new Float32Array(dustCount * 3);
+    this.dustBase = new Float32Array(dustCount);
+    for (let i = 0; i < dustCount; i++) {
+      dustPos[i * 3] = rand(-48, 48);
+      dustPos[i * 3 + 1] = rand(0, 9);
+      dustPos[i * 3 + 2] = rand(-48, 48);
+      this.dustBase[i] = dustPos[i * 3 + 1];
+    }
+    const dustGeo = new THREE.BufferGeometry();
+    dustGeo.setAttribute("position", new THREE.BufferAttribute(dustPos, 3));
+    this.dust = new THREE.Points(
+      dustGeo,
+      new THREE.PointsMaterial({ color: 0xffc890, size: 0.11, transparent: true, opacity: 0.4, depthWrite: false, blending: THREE.AdditiveBlending })
+    );
+    this.scene.add(this.dust);
   }
 
   /* ------------------------------------------------ entities */
@@ -722,6 +855,7 @@ export class Game {
     const g = new THREE.Group();
     const hitMeshes: THREE.Mesh[] = [];
     const parts: Enemy["parts"] = { body: g };
+    const baseScale = new THREE.Vector3(1, 1, 1);
 
     const addShadow = (s: number) => {
       const sh = new THREE.Mesh(this.geo.shadow, this.basic.shadow);
@@ -735,6 +869,7 @@ export class Game {
       const body = new THREE.Mesh(this.geo.gruntBody, this.mat.alienGreen);
       body.position.y = 0.95;
       body.scale.set(1, 1.25, 0.9);
+      baseScale.set(1, 1.25, 0.9);
       g.add(body);
       hitMeshes.push(body);
       const head = new THREE.Mesh(this.geo.head, this.mat.alienGreenD);
@@ -822,6 +957,8 @@ export class Game {
       waypoint: null,
       parts,
       hitMeshes,
+      hitPop: 0,
+      baseScale,
     };
     for (const m of hitMeshes) m.userData.e = e;
     g.position.set(x, 0, z);
@@ -840,6 +977,11 @@ export class Game {
     const wmul = 1 + (this.wave - 1) * 0.09;
     e.hp = Math.round(ENEMY_DEFS[kind].hp * wmul);
     e.speed = ENEMY_DEFS[kind].speed * (1 + Math.min(this.wave * 0.03, 0.45));
+    /* beam-down portal */
+    this.spawnBeam(e.group.position);
+    this.spawnRing(e.group.position, 0x8dff3a, 3.2, 0.45);
+    this.burst(this.v1.set(x, 1.2, z), 0x8dff3a, 8, 3.5);
+    sfx.portal();
   }
 
   private spawnAttractCrowd() {
@@ -861,27 +1003,57 @@ export class Game {
     e.dieT = 0;
     this.hitList = this.hitList.filter((m) => !e.hitMeshes.includes(m));
     const p = e.group.position;
-    this.burst(this.v1.set(p.x, 1.2, p.z), 0x6fdd2f, e.kind === "brute" ? 22 : 14, 5.5);
-    if (e.kind === "brute") sfx.bruteDie();
-    else sfx.alienDie();
+    this.burst(this.v1.set(p.x, 1.2, p.z), 0x6fdd2f, e.kind === "brute" ? 26 : 14, e.kind === "brute" ? 7 : 5.5);
+    /* goo splat decals */
+    const splats = e.kind === "brute" ? 3 : 2;
+    for (let i = 0; i < splats; i++) {
+      this.spawnDecal(
+        this.v2.set(p.x + rand(-0.8, 0.8), 0.02, p.z + rand(-0.8, 0.8)),
+        this.v3.set(0, 1, 0),
+        i === 0 ? 0x4f9a1e : 0x6fdd2f,
+        (e.kind === "brute" ? rand(1.5, 2.3) : rand(0.8, 1.4)),
+        rand(9, 13)
+      );
+    }
+    if (e.kind === "brute") {
+      sfx.bruteDie();
+      sfx.boom();
+      this.spawnRing(p, 0xb46aff, 7.5, 0.55);
+      this.spawnRing(p, 0x8dff3a, 5, 0.4);
+      this.shake += 0.75;
+    } else {
+      sfx.alienDie();
+    }
     if (byPlayer) {
-      const sc = e.scoreV;
+      if (this.comboT > 0) this.comboCount++;
+      else this.comboCount = 1;
+      this.comboT = 2.6;
+      const mult = Math.min(this.comboCount, 6);
+      const sc = e.scoreV * mult;
       const score = hud.get().score + sc;
       const kills = hud.get().kills + 1;
-      hud.set({ score, kills });
-      this.showText(p.x, 2.2, p.z, `+${sc}`, e.kind === "brute" ? "#ffd23f" : "#8dff3a");
+      hud.set({ score, kills, combo: this.comboCount });
+      this.showText(p.x, 2.2, p.z, `+${sc}`, mult > 1 ? "#ff9a2a" : e.kind === "brute" ? "#ffd23f" : "#8dff3a");
+      if (mult >= 2) this.showText(p.x, 3.1, p.z, `COMBO x${mult}`, "#ff9a2a");
       hud.feed(`${pick(KILL_LINES[e.kind])}  +${sc}`, "#8dff3a");
       if (Math.random() < 0.3) this.dropPickup(p.x, p.z);
     }
     this.hudSync();
   }
 
-  private damageEnemy(e: Enemy, dmg: number, point: THREE.Vector3) {
+  private damageEnemy(e: Enemy, dmg: number, point: THREE.Vector3, isHead: boolean) {
     if (e.dying) return;
     e.hp -= dmg;
-    sfx.squish();
+    e.hitPop = 0.22;
+    if (isHead) {
+      sfx.headshot();
+      this.showText(point.x, point.y + 0.45, point.z, "HEADSHOT", "#ffd23f");
+      this.burst(point, 0xffc840, 9, 4.5);
+    } else {
+      sfx.squish();
+    }
     hud.hit();
-    this.burst(point, 0x79e836, 6, 3.5);
+    this.burst(point, 0x79e836, isHead ? 8 : 5, 3.5);
     /* knockback */
     const kb = e.kind === "brute" ? 0.04 : 0.16;
     this.v2.copy(point).sub(this.camera.position);
@@ -965,16 +1137,138 @@ export class Game {
     t.life = 1;
   }
 
-  private fireTracer(from: THREE.Vector3, to: THREE.Vector3) {
+  private fireTracer(from: THREE.Vector3, to: THREE.Vector3, thick = 1, color = 0xffe2a8, life = 0.07) {
     let tr = this.tracers.find((t) => t.life <= 0);
     if (!tr) tr = this.tracers[0];
     const mid = this.v2.copy(from).add(to).multiplyScalar(0.5);
     tr.mesh.position.copy(mid);
     tr.mesh.lookAt(to);
-    tr.mesh.scale.set(1, 1, Math.max(0.5, from.distanceTo(to)));
+    tr.mesh.scale.set(thick, thick, Math.max(0.5, from.distanceTo(to)));
     tr.mesh.visible = true;
+    tr.mat.color.set(color);
     tr.mat.opacity = 0.9;
-    tr.life = 0.07;
+    tr.life = life;
+    tr.mesh.userData.maxLife = life;
+  }
+
+  private muzzleSmoke(count: number) {
+    for (let i = 0; i < count; i++) {
+      const p = this.particles[this.pIndex];
+      this.pIndex = (this.pIndex + 1) % this.particles.length;
+      p.active = true;
+      p.pos.copy(this.muzzleV).add(this.v3.set(rand(-0.05, 0.05), rand(-0.05, 0.05), rand(-0.05, 0.05)));
+      p.vel.set(rand(-0.3, 0.3), rand(0.4, 0.9), rand(-0.5, 0.1));
+      p.maxLife = p.life = rand(0.3, 0.55);
+      p.size = rand(0.5, 0.95);
+      p.color.set(0x9a948c);
+      p.grav = -1.6;
+    }
+  }
+
+  private spawnDecal(pos: THREE.Vector3, normal: THREE.Vector3, color: number, size: number, life: number) {
+    let d = this.decals.find((d) => !d.active);
+    if (!d) d = this.decals[0];
+    d.active = true;
+    d.life = life;
+    d.maxLife = life;
+    d.mesh.visible = true;
+    d.mesh.position.copy(pos).addScaledVector(normal, 0.035);
+    this.v3.copy(pos).add(normal);
+    d.mesh.lookAt(this.v3);
+    d.mesh.rotateZ(rand(0, Math.PI * 2));
+    d.mesh.scale.set(size, size, 1);
+    d.mat.color.set(color);
+    d.mat.opacity = 0.85;
+  }
+
+  private spawnRing(pos: THREE.Vector3, color: number, max: number, dur: number) {
+    let r = this.rings.find((r) => r.t >= r.dur);
+    if (!r) r = this.rings[0];
+    r.t = 0;
+    r.dur = dur;
+    r.max = max;
+    r.mesh.visible = true;
+    r.mesh.position.set(pos.x, 0.08, pos.z);
+    r.mat.color.set(color);
+  }
+
+  private spawnBeam(pos: THREE.Vector3) {
+    let b = this.beams.find((b) => b.t >= 1);
+    if (!b) b = this.beams[0];
+    b.t = 0;
+    b.mesh.visible = true;
+    b.mesh.position.set(pos.x, 3.5, pos.z);
+    b.mesh.rotation.y = rand(0, 3);
+  }
+
+  private updateFX(dt: number) {
+    for (const d of this.decals) {
+      if (!d.active) continue;
+      d.life -= dt;
+      if (d.life <= 0) {
+        d.active = false;
+        d.mesh.visible = false;
+        continue;
+      }
+      d.mat.opacity = 0.85 * Math.min(1, d.life / (d.maxLife * 0.3));
+    }
+    for (const r of this.rings) {
+      if (r.t >= r.dur) continue;
+      r.t += dt;
+      const k = Math.min(1, r.t / r.dur);
+      const s = 0.4 + k * r.max;
+      r.mesh.scale.set(s, s, s);
+      r.mat.opacity = (1 - k) * 0.85;
+      if (k >= 1) r.mesh.visible = false;
+    }
+    for (const b of this.beams) {
+      if (b.t >= 1) continue;
+      b.t += dt / 0.5;
+      const k = Math.min(1, b.t);
+      b.mesh.rotation.y += dt * 3;
+      b.mesh.scale.set(1 - k * 0.75, 1, 1 - k * 0.75);
+      b.mat.opacity = (1 - k) * 0.5;
+      if (k >= 1) b.mesh.visible = false;
+    }
+  }
+
+  private updateAmbient(dt: number) {
+    const t = this.clock.elapsedTime;
+    for (const w of this.weeds) {
+      w.g.position.x += w.speed * dt;
+      w.g.position.z = w.baseZ + Math.sin(t * 0.6 + w.phase) * 2;
+      w.g.position.y = 0.5 + Math.abs(Math.sin(t * 3.2 + w.phase)) * 0.3;
+      w.g.rotation.x -= (w.speed / 0.5) * dt;
+      w.g.rotation.z += dt * 1.4;
+      if (w.g.position.x > 98) {
+        w.g.position.x = -98;
+        w.baseZ = rand(-80, 80);
+      }
+    }
+    for (const u of this.ufos) {
+      u.a += u.sp * dt;
+      u.g.position.set(Math.cos(u.a) * u.r, u.h + Math.sin(t * 0.8 + u.r) * 1.6, Math.sin(u.a) * u.r);
+      u.g.rotation.y = -u.a + Math.PI / 2;
+      for (let i = 0; i < u.lights.length; i++) {
+        u.lights[i].visible = Math.sin(t * 5 + i * 1.05 + u.r) > 0.1;
+      }
+    }
+    const posAttr = this.dust.geometry.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < posAttr.count; i++) {
+      const y = (this.dustBase[i] + t * 0.28) % 9;
+      posAttr.setY(i, y);
+      posAttr.setX(i, posAttr.getX(i) + Math.sin(t * 0.5 + i) * 0.002);
+    }
+    posAttr.needsUpdate = true;
+  }
+
+  private updateCombo(dt: number) {
+    if (this.comboCount <= 0) return;
+    this.comboT -= dt;
+    if (this.comboT <= 0) {
+      this.comboCount = 0;
+      hud.set({ combo: 0 });
+    }
   }
 
   /* ------------------------------------------------ player / weapons */
@@ -994,13 +1288,23 @@ export class Game {
     }
     this.mags[this.weaponIdx]--;
     this.shootCd = w.rate;
-    this.recoil = Math.min(1.2, this.recoil + w.recoil * 0.55);
+    this.recoil = Math.min(1.4, this.recoil + w.recoil * 0.55);
     this.flashT = 0.045;
-    this.gunLight.intensity = this.weaponIdx === 1 ? 46 : 28;
+    this.gunLight.intensity = this.weaponIdx === 1 ? 60 : 34;
     this.shake += w.kick;
+    /* recoil springs: sustained SMG fire climbs, magnum punches + rolls */
+    this.kickPV += w.pitchKick * rand(0.85, 1.15);
+    if (this.weaponIdx === 1) {
+      this.rollSign *= -1;
+      this.kickRV += w.rollKick * this.rollSign * rand(0.8, 1.2);
+      this.shake += 0.12;
+    } else {
+      this.kickRV += w.rollKick * rand(-1, 1);
+    }
     w.sound();
     this.casing();
-    document.documentElement.style.setProperty("--spr", `${Math.round(6 + this.recoil * 12)}px`);
+    document.documentElement.style.setProperty("--spr", `${Math.round(6 + this.recoil * 14)}px`);
+    this.muzzleSmoke(this.weaponIdx === 1 ? 2 : 1);
 
     /* hitscan */
     const spread = w.spread * (1 + this.recoil * 1.4);
@@ -1023,12 +1327,25 @@ export class Game {
       const h = hits[0];
       end = h.point.clone();
       const e = h.object.userData.e as Enemy | undefined;
-      if (e) this.damageEnemy(e, w.dmg, h.point);
-      else this.burst(h.point, 0xffb050, 4, 2.5);
+      if (e) {
+        const headY = e.kind === "brute" ? 1.95 : 1.5;
+        const isHead = h.point.y > e.group.position.y + headY;
+        this.damageEnemy(e, isHead ? w.dmg * 1.8 : w.dmg, h.point, isHead);
+      } else {
+        this.burst(h.point, 0xffb050, 5, 3);
+        if (h.face) {
+          const n = h.face.normal.clone().transformDirection(h.object.matrixWorld);
+          this.spawnDecal(h.point, n, 0x17100c, rand(0.24, 0.5), rand(5, 8));
+        }
+      }
     } else {
       end = this.camera.position.clone().addScaledVector(this.v1, 120);
     }
-    this.fireTracer(this.muzzleV.clone(), end);
+    if (this.weaponIdx === 1) {
+      this.fireTracer(this.muzzleV.clone(), end, 2.4, 0xffb050, 0.1);
+    } else {
+      this.fireTracer(this.muzzleV.clone(), end, 1, 0xffe2a8, 0.07);
+    }
     this.hudSync();
   }
 
@@ -1183,7 +1500,11 @@ export class Game {
     this.pos.z = Math.max(-WORLD_R + 2, Math.min(WORLD_R, this.pos.z));
     this.pos.y += this.vel.y * dt;
     if (this.pos.y <= 0) {
-      if (!this.onGround && this.vel.y < -6) sfx.land();
+      if (!this.onGround && this.vel.y < -6) {
+        sfx.land();
+        this.burst(this.v1.set(this.pos.x, 0.15, this.pos.z), 0xc4a06a, 7, 2.2);
+        this.shake += 0.1;
+      }
       this.pos.y = 0;
       this.vel.y = 0;
       this.onGround = true;
@@ -1194,6 +1515,19 @@ export class Game {
     const bobAmp = this.onGround ? Math.min(horiz / 6, 1) : 0;
     const eyeY = 1.7 + Math.sin(this.bobT * 2) * 0.05 * bobAmp;
 
+    /* recoil springs */
+    this.kickPV += (-110 * this.kickP - 13 * this.kickPV) * dt;
+    this.kickP = Math.max(-0.12, Math.min(0.34, this.kickP + this.kickPV * dt));
+    this.kickRV += (-90 * this.kickR - 11 * this.kickRV) * dt;
+    this.kickR += this.kickRV * dt;
+
+    /* sprint FOV kick */
+    const fovTarget = sprint && horiz > 1 ? 83 : 75;
+    if (Math.abs(this.camera.fov - fovTarget) > 0.05) {
+      this.camera.fov += (fovTarget - this.camera.fov) * Math.min(1, 9 * dt);
+      this.camera.updateProjectionMatrix();
+    }
+
     this.shake = Math.max(0, this.shake - dt * 2.6);
     const sh = this.shake * this.shake * 0.35;
     this.camera.position.set(
@@ -1201,7 +1535,11 @@ export class Game {
       eyeY + rand(-sh, sh),
       this.pos.z + rand(-sh, sh)
     );
-    this.camera.rotation.set(this.pitch + rand(-sh, sh) * 0.4, this.yaw, rand(-sh, sh) * 0.3);
+    this.camera.rotation.set(
+      this.pitch + this.kickP + rand(-sh, sh) * 0.4,
+      this.yaw,
+      this.kickR * 0.06 + rand(-sh, sh) * 0.3
+    );
 
     /* weapon timers */
     this.shootCd -= dt;
@@ -1222,9 +1560,9 @@ export class Game {
     const horiz = Math.hypot(this.vel.x, this.vel.z);
     const bob = Math.sin(this.bobT * 2) * Math.min(horiz / 6, 1);
     let y = -0.0 + bob * 0.02;
-    let rotZ = Math.sin(this.bobT) * Math.min(horiz / 6, 1) * 0.03;
-    let rotX = this.recoil * (this.weaponIdx === 1 ? 0.3 : 0.12);
-    let z = -this.recoil * 0.1;
+    let rotZ = Math.sin(this.bobT) * Math.min(horiz / 6, 1) * 0.03 + this.kickR * 0.02;
+    let rotX = this.recoil * (this.weaponIdx === 1 ? 0.22 : 0.09) + Math.max(0, this.kickP) * 1.6;
+    let z = -this.recoil * 0.08 - Math.max(0, this.kickP) * 0.38;
     if (this.reloading) {
       const w = WEAPONS[this.weaponIdx];
       const t = 1 - this.reloadT / w.reloadTime;
@@ -1235,7 +1573,7 @@ export class Game {
     if (this.switchT > 0) {
       y -= this.switchT * 1.2;
     }
-    gun.position.set(0, y, 0);
+    gun.position.set(this.kickR * -0.012, y, 0);
     gun.rotation.set(rotX, 0, rotZ);
     for (const gmodel of this.guns) {
       gmodel.position.z = -0.78 + z;
@@ -1347,6 +1685,12 @@ export class Game {
       e.group.position.y = baseY;
       if (e.parts.armL) e.parts.armL.rotation.x = Math.sin(e.bobT) * 0.7;
       if (e.parts.armR) e.parts.armR.rotation.x = -Math.sin(e.bobT) * 0.7;
+      /* hit squash pop */
+      if (e.hitPop > 0) {
+        e.hitPop = Math.max(0, e.hitPop - dt);
+        const pop = 1 + (e.hitPop / 0.22) * 0.22;
+        e.parts.body.scale.set(e.baseScale.x * pop, e.baseScale.y / pop, e.baseScale.z * pop);
+      }
     }
   }
 
@@ -1475,7 +1819,8 @@ export class Game {
     for (const t of this.tracers) {
       if (t.life > 0) {
         t.life -= dt;
-        t.mat.opacity = Math.max(0, (t.life / 0.07) * 0.9);
+        const max = (t.mesh.userData.maxLife as number) || 0.07;
+        t.mat.opacity = Math.max(0, (t.life / max) * 0.9);
         if (t.life <= 0) t.mesh.visible = false;
       }
     }
@@ -1586,6 +1931,24 @@ export class Game {
       t.sprite.visible = false;
     }
     for (const p of this.particles) p.active = false;
+    for (const d of this.decals) {
+      d.active = false;
+      d.mesh.visible = false;
+    }
+    for (const r of this.rings) {
+      r.t = r.dur;
+      r.mesh.visible = false;
+    }
+    for (const b of this.beams) {
+      b.t = 1;
+      b.mesh.visible = false;
+    }
+    this.comboCount = 0;
+    this.comboT = 0;
+    this.kickP = 0;
+    this.kickPV = 0;
+    this.kickR = 0;
+    this.kickRV = 0;
     this.pos.set(0, 0, 16);
     this.vel.set(0, 0, 0);
     this.yaw = 0;
@@ -1604,7 +1967,7 @@ export class Game {
     this.guns[0].visible = true;
     this.guns[1].visible = false;
     this.hudSync();
-    hud.set({ score: 0, kills: 0, feed: [] });
+    hud.set({ score: 0, kills: 0, feed: [], combo: 0 });
   }
 
   startGame() {
@@ -1737,6 +2100,8 @@ export class Game {
       this.camera.lookAt(0, 3, -8);
       this.updateEnemies(dt);
       this.updateParticles(dt);
+      this.updateFX(dt);
+      this.updateAmbient(dt);
     } else if (this.state === "playing") {
       this.updatePlayer(dt);
       this.updateEnemies(dt);
@@ -1746,6 +2111,9 @@ export class Game {
       this.updateParticles(dt);
       this.updateTracers(dt);
       this.updateTexts(dt);
+      this.updateFX(dt);
+      this.updateAmbient(dt);
+      this.updateCombo(dt);
       this.updateViewmodel(dt);
       this.drawRadar();
     } else {
