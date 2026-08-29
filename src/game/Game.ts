@@ -21,6 +21,8 @@ interface WeaponDef {
   reloadTime: number;
   recoil: number;
   kick: number;
+  kickR: number;
+  bloomKick: number;
   pitchKick: number;
   rollKick: number;
   fovKick: number;
@@ -28,10 +30,10 @@ interface WeaponDef {
 }
 
 const WEAPONS: WeaponDef[] = [
-  { name: "RATTLER SMG", kind: "hitscan", dmg: 12, rate: 0.08, magSize: 36, spread: 0.023, pellets: 1, reloadTime: 1.25, recoil: 0.3, kick: 0.013, pitchKick: 1.3, rollKick: 0.5, fovKick: 0.4, sound: () => sfx.smg() },
-  { name: "JUDGE MAGNUM", kind: "hitscan", dmg: 70, rate: 0.36, magSize: 6, spread: 0.004, pellets: 1, reloadTime: 1.6, recoil: 1.2, kick: 0.06, pitchKick: 5.0, rollKick: 2.6, fovKick: 1.6, sound: () => sfx.magnum() },
-  { name: "PUMPER-8", kind: "hitscan", dmg: 12, rate: 0.68, magSize: 8, spread: 0.058, pellets: 8, reloadTime: 1.9, recoil: 0.95, kick: 0.045, pitchKick: 4.0, rollKick: 2.2, fovKick: 2.0, sound: () => sfx.shotgun() },
-  { name: "BOOMSTICK", kind: "rocket", dmg: 150, rate: 0.85, magSize: 1, spread: 0.004, pellets: 1, reloadTime: 2.0, recoil: 1.4, kick: 0.08, pitchKick: 6.2, rollKick: 3.2, fovKick: 2.6, sound: () => sfx.launch() },
+  { name: "RATTLER SMG", kind: "hitscan", dmg: 12, rate: 0.08, magSize: 36, spread: 0.023, pellets: 1, reloadTime: 1.25, recoil: 0.3, kick: 0.022, kickR: 0.008, bloomKick: 0.05, pitchKick: 1.3, rollKick: 0.5, fovKick: 0.4, sound: () => sfx.smg() },
+  { name: "JUDGE MAGNUM", kind: "hitscan", dmg: 70, rate: 0.36, magSize: 6, spread: 0.004, pellets: 1, reloadTime: 1.6, recoil: 1.2, kick: 0.07, kickR: 0.05, bloomKick: 0.3, pitchKick: 5.0, rollKick: 2.6, fovKick: 1.6, sound: () => sfx.magnum() },
+  { name: "PUMPER-8", kind: "hitscan", dmg: 12, rate: 0.68, magSize: 8, spread: 0.058, pellets: 8, reloadTime: 1.9, recoil: 0.95, kick: 0.055, kickR: 0.04, bloomKick: 0.36, pitchKick: 4.0, rollKick: 2.2, fovKick: 2.0, sound: () => sfx.shotgun() },
+  { name: "BOOMSTICK", kind: "rocket", dmg: 150, rate: 0.85, magSize: 1, spread: 0.004, pellets: 1, reloadTime: 2.0, recoil: 1.4, kick: 0.095, kickR: 0.06, bloomKick: 0.45, pitchKick: 6.2, rollKick: 3.2, fovKick: 2.6, sound: () => sfx.launch() },
 ];
 
 const ENEMY_DEFS: Record<
@@ -223,6 +225,10 @@ export class Game {
   private flashT = 0;
   private switchT = 0;
   private dryT = 0;
+  /* crosshair bloom: fire continuity + movement */
+  private bloom = 0;
+  /* rotational camera shake impulse */
+  private shakeR = 0;
   /* recoil: one decaying impulse — quick vertical punch, fast settle, no wobble, no camera roll */
   private recoilKick = 0;
   private gunRoll = 0;
@@ -2449,6 +2455,9 @@ export class Game {
     else fg.scale.setScalar(fs);
     this.gunLight.intensity = this.weaponIdx === 1 ? 42 : 26;
     this.shake += w.kick;
+    this.shakeR += w.kickR;
+    /* firing continuity feeds crosshair bloom + real spread */
+    this.bloom = Math.min(1.2, this.bloom + w.bloomKick);
     /* recoil: one decaying impulse. Clamped so sustained fire never climbs your aim. */
     this.recoilKick = Math.min(this.recoilKick + w.pitchKick * 0.2, 3);
     if (w.rollKick >= 2) {
@@ -2458,7 +2467,6 @@ export class Game {
     }
     w.sound();
     if (w.kind !== "rocket") this.casing();
-    document.documentElement.style.setProperty("--spr", `${Math.round(6 + this.recoil * 14)}px`);
     this.muzzleSmoke(this.weaponIdx === 0 ? 1 : 2);
     this.fovKick += w.fovKick;
     this.gunLight.intensity = w.kind === "rocket" ? 55 : this.gunLight.intensity;
@@ -2477,7 +2485,7 @@ export class Game {
     }
 
     /* hitscan — per pellet */
-    const baseSpread = w.spread * (1 + this.recoil * 1.4);
+    const baseSpread = w.spread * (1 + this.bloom * 1.15);
     this.camera.getWorldDirection(this.v1);
     const right = this.v2.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     const up = this.v3.set(0, 1, 0);
@@ -2559,6 +2567,7 @@ export class Game {
     if (this.state !== "playing") return;
     this.health = Math.max(0, this.health - d);
     this.shake += 0.5;
+    this.shakeR += 0.05;
     sfx.hurt();
     hud.dmg();
     this.post.pulseDamage();
@@ -2683,7 +2692,8 @@ export class Game {
       if (!this.onGround && this.vel.y < -6) {
         sfx.land();
         this.burst(this.v1.set(this.pos.x, 0.15, this.pos.z), 0xc4a06a, 7, 2.2);
-        this.shake += 0.1;
+        this.shake += 0.24;
+        this.shakeR += 0.03;
       }
       this.pos.y = 0;
       this.vel.y = 0;
@@ -2698,6 +2708,9 @@ export class Game {
     /* recoil: fast exponential settle — a punch that always returns to center */
     this.recoilKick *= Math.exp(-dt * 14);
     this.gunRoll *= Math.exp(-dt * 11);
+    /* bloom decays when you stop shooting; movement keeps feeding it below */
+    this.bloom = Math.max(0, this.bloom - dt * 1.7);
+    this.shakeR *= Math.exp(-dt * 24);
 
     /* fov: sprint stretch + fire punch, springy */
     this.fovKick *= Math.pow(0.0008, dt);
@@ -2716,7 +2729,10 @@ export class Game {
     }
 
     this.shake = Math.max(0, this.shake - dt * 2.6);
-    const sh = this.shake * this.shake * 0.35;
+    /* sprint adds a faint constant rattle; impacts stack on top */
+    const sprintRattle = sprint && horiz > 6 ? 0.016 : 0;
+    const sh = this.shake * this.shake * 0.35 + sprintRattle;
+    const sr = this.shakeR;
     const breathe = Math.sin(this.clock.elapsedTime * 1.7) * 0.01;
     this.camera.position.set(
       this.pos.x + rand(-sh, sh),
@@ -2724,9 +2740,9 @@ export class Game {
       this.pos.z + rand(-sh, sh)
     );
     this.camera.rotation.set(
-      this.pitch + this.recoilKick * 0.022 + breathe * 0.25 + rand(-sh, sh) * 0.4,
-      this.yaw,
-      rand(-sh, sh) * 0.3
+      this.pitch + this.recoilKick * 0.022 + breathe * 0.25 + rand(-sh, sh) * 0.4 + rand(-sr, sr) * 0.5,
+      this.yaw + rand(-sr, sr) * 0.35,
+      rand(-sh, sh) * 0.3 + rand(-sr, sr) * 0.6
     );
 
     /* weapon timers */
@@ -2735,7 +2751,11 @@ export class Game {
     this.recoil = Math.max(0, this.recoil - dt * 5);
     this.flashT -= dt;
     this.switchT -= dt;
-    document.documentElement.style.setProperty("--spr", `${Math.round(6 + this.recoil * 12)}px`);
+    /* crosshair bloom: shot continuity + speed + airborne, clamped to sane bounds */
+    const moveBloom = Math.min(1, horiz / 11.5) * 0.55;
+    const airBloom = this.onGround ? 0 : 0.16;
+    const bloomTotal = Math.min(1, this.bloom + moveBloom + airBloom);
+    document.documentElement.style.setProperty("--spr", `${Math.round(5 + bloomTotal * 20)}px`);
     if (this.reloading) {
       this.reloadT -= dt;
       if (this.reloadT <= 0) this.finishReload();
@@ -3046,6 +3066,7 @@ export class Game {
     sfx.crack();
     sfx.rumble();
     this.shake += 1.5;
+    this.shakeR += 0.09;
     this.freeze = Math.max(this.freeze, 0.075);
     this.fovKick += 3.2;
     hud.set({ boomId: hud.get().boomId + 1 });
@@ -3364,6 +3385,8 @@ export class Game {
     this.comboT = 0;
     this.recoilKick = 0;
     this.gunRoll = 0;
+    this.bloom = 0;
+    this.shakeR = 0;
     this.pos.set(0, 0, 16);
     this.vel.set(0, 0, 0);
     this.yaw = 0;
