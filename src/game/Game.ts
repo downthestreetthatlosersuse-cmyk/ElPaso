@@ -297,6 +297,8 @@ export class Game {
     });
     this.renderer.setPixelRatio(1);
     this.renderer.setSize(W, H, false);
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.domElement.classList.add("game-canvas");
     container.appendChild(this.renderer.domElement);
 
