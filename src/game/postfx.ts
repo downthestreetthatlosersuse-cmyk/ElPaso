@@ -16,7 +16,7 @@ const GodRayShader = {
     tOcc: { value: null },
     uSunUv: { value: new THREE.Vector2(0.25, 0.6) },
     uSunVis: { value: 0 },
-    uStrength: { value: 0.05 },
+    uStrength: { value: 0.028 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -43,7 +43,7 @@ const GodRayShader = {
         vec3 s = texture2D(tOcc, uv).rgb;
         float lum = max(max(s.r, s.g), s.b);
         ill += max(lum - 0.4, 0.0) * decay;
-        decay *= 0.952;
+        decay *= 0.94;
       }
       ill *= uSunVis * uStrength;
       vec3 rays = vec3(1.0, 0.58, 0.3) * ill;
@@ -95,7 +95,7 @@ const CrtShader = {
     void main() {
       vec2 uv = vUv;
       /* damage jitter */
-      uv.x += (hash(vec2(floor(uTime * 90.0), floor(uv.y * 60.0))) - 0.5) * uDamage * 0.014;
+      uv.x += (hash(vec2(floor(uTime * 90.0), floor(uv.y * 60.0))) - 0.5) * uDamage * 0.008;
 
       /* barrel distortion */
       vec2 c = uv - 0.5;
@@ -103,7 +103,7 @@ const CrtShader = {
       uv = 0.5 + c * (1.0 + 0.14 * r2 + 0.055 * r2 * r2);
 
       /* chromatic aberration — stronger at edges and on impact */
-      float ab = (0.0011 + uAber * 0.005 + uDamage * 0.004) * (0.35 + r2 * 2.4);
+      float ab = (0.0008 + uAber * 0.003 + uDamage * 0.0025) * (0.35 + r2 * 2.4);
       vec3 col;
       col.r = texture2D(tDiffuse, uv + c * ab).r;
       col.g = texture2D(tDiffuse, uv).g;
@@ -111,7 +111,7 @@ const CrtShader = {
       if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) col = vec3(0.0);
 
       /* interlaced scanlines */
-      float scan = 0.80 + 0.20 * sin((uv.y + uInter) * uRes.y * 3.14159);
+      float scan = 0.85 + 0.15 * sin((uv.y + uInter) * uRes.y * 3.14159);
       col *= scan;
 
       /* slight phosphor tint shift */
@@ -119,23 +119,23 @@ const CrtShader = {
 
       /* film grain + dither to kill banding */
       float g = hash(uv * uRes + fract(uTime) * 61.7);
-      col += (g - 0.5) * 0.06;
+      col += (g - 0.5) * 0.04;
 
       /* vignette */
       float edge = smoothstep(0.32, 0.98, length(c));
-      col *= 1.0 - edge * 0.5;
+      col *= 1.0 - edge * 0.42;
 
       /* low-hp heartbeat at the edges */
       float pulse = 0.5 + 0.5 * sin(uTime * 6.5);
-      col = mix(col, vec3(0.55, 0.02, 0.04), uLowHp * pulse * edge * 0.7);
+      col = mix(col, vec3(0.55, 0.02, 0.04), uLowHp * pulse * edge * 0.5);
 
       /* damage red wash */
-      col = mix(col, vec3(0.66, 0.03, 0.05), uDamage * 0.42);
+      col = mix(col, vec3(0.66, 0.03, 0.05), uDamage * 0.3);
 
       /* hitstop: desaturate + contrast punch */
       float lum = dot(col, vec3(0.299, 0.587, 0.114));
-      col = mix(vec3(lum), col, 1.0 - uHit * 0.3);
-      col *= 1.0 + uHit * 0.22;
+      col = mix(vec3(lum), col, 1.0 - uHit * 0.18);
+      col *= 1.0 + uHit * 0.12;
 
       /* nuke whiteout */
       col = mix(col, vec3(1.3, 1.24, 1.05), uNuke);
@@ -175,7 +175,7 @@ export function createPostFX(
   godray.uniforms.tOcc.value = lowRT.texture;
   composer.addPass(godray);
 
-  const bloom = new UnrealBloomPass(new THREE.Vector2(width, height), 0.85, 0.7, 0.72);
+  const bloom = new UnrealBloomPass(new THREE.Vector2(width, height), 0.42, 0.55, 0.78);
   composer.addPass(bloom);
 
   const crt = new ShaderPass(CrtShader);
@@ -227,21 +227,21 @@ export function createPostFX(
     update,
     pulseDamage: () => {
       damage = 1;
-      aber = Math.max(aber, 0.7);
+      aber = Math.max(aber, 0.45);
     },
     flashNuke: () => {
       nuke = 1;
-      aber = 1;
+      aber = 0.6;
     },
     pulseKill: (big: boolean) => {
-      aber = Math.max(aber, big ? 0.85 : 0.3);
-      hit = Math.max(hit, big ? 1 : 0.55);
+      aber = Math.max(aber, big ? 0.5 : 0.18);
+      hit = Math.max(hit, big ? 0.75 : 0.4);
     },
     setLowHp: (t: number) => {
       lowHp = t;
     },
     setFreeze: (active: boolean) => {
-      if (active) hit = Math.max(hit, 0.5);
+      if (active) hit = Math.max(hit, 0.4);
     },
     dispose: () => {
       lowRT.dispose();

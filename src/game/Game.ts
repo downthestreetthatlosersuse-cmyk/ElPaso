@@ -284,7 +284,8 @@ export class Game {
   /* viewmodel */
   private gunGroup = new THREE.Group();
   private guns: THREE.Group[] = [];
-  private flashMeshes: THREE.Mesh[] = [];
+  private flashMeshes: THREE.Object3D[] = [];
+  private flashMats: THREE.MeshBasicMaterial[] = [];
   private gunLight!: THREE.PointLight;
   private muzzleV = new THREE.Vector3();
 
@@ -342,7 +343,7 @@ export class Game {
     this.enableShadows();
     /* cinematic post pipeline: god rays, bloom, reactive CRT */
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.12;
+    this.renderer.toneMappingExposure = 1.05;
     this.post = createPostFX(this.renderer, this.scene, this.camera, W, H, new THREE.Vector3(-160, 62, -250));
     this.hudSync();
     this.loop();
@@ -1172,7 +1173,7 @@ export class Game {
     }
     /* burning drums */
     for (let i = 0; i < this.fireBarrelSpots.length; i++) {
-      const l = new THREE.PointLight(0xff7a2a, 14, 12, 2);
+      const l = new THREE.PointLight(0xff7a2a, 10, 12, 2);
       l.position.copy(this.fireBarrelSpots[i]);
       this.scene.add(l);
       this.fireLights.push(l);
@@ -1237,9 +1238,63 @@ export class Game {
     return new THREE.CanvasTexture(c);
   }
 
+  /* jagged star muzzle flash texture — pixelated core + random spikes */
+  private makeStarTex(spikes: number): THREE.CanvasTexture {
+    const c = document.createElement("canvas");
+    c.width = c.height = 64;
+    const g = c.getContext("2d")!;
+    g.clearRect(0, 0, 64, 64);
+    const grad = g.createRadialGradient(32, 32, 1, 32, 32, 21);
+    grad.addColorStop(0, "#ffffff");
+    grad.addColorStop(0.28, "#ffe9b0");
+    grad.addColorStop(0.62, "rgba(255,160,50,0.55)");
+    grad.addColorStop(1, "rgba(255,120,30,0)");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 64, 64);
+    g.fillStyle = "rgba(255,222,140,0.92)";
+    for (let i = 0; i < spikes; i++) {
+      const a = (i / spikes) * Math.PI * 2 + rand(-0.14, 0.14);
+      const len = rand(19, 30);
+      g.save();
+      g.translate(32, 32);
+      g.rotate(a);
+      g.beginPath();
+      g.moveTo(0, -2.4);
+      g.lineTo(len, 0);
+      g.lineTo(0, 2.4);
+      g.closePath();
+      g.fill();
+      g.restore();
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.magFilter = THREE.NearestFilter;
+    t.minFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+    return t;
+  }
+
+  /* crossed-plane flash: reads solid from any angle, rolls per shot */
+  private buildFlash(tex: THREE.CanvasTexture, size: number): THREE.Group {
+    const mat = new THREE.MeshBasicMaterial({
+      map: tex,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const grp = new THREE.Group();
+    const p1 = new THREE.Mesh(new THREE.PlaneGeometry(size, size), mat);
+    const p2 = new THREE.Mesh(new THREE.PlaneGeometry(size, size), mat);
+    p2.rotation.y = Math.PI / 2;
+    grp.add(p1, p2);
+    this.flashMats.push(mat);
+    return grp;
+  }
+
   private buildViewmodels() {
-    const flashTex = this.makeFlashTexture();
-    const flashMat = new THREE.MeshBasicMaterial({ map: flashTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+    const star4 = this.makeStarTex(4);
+    const star8 = this.makeStarTex(8);
 
     /* SMG */
     const smg = new THREE.Group();
@@ -1262,9 +1317,8 @@ export class Game {
     const sWood = new THREE.Mesh(new THREE.BoxGeometry(0.095, 0.05, 0.2), this.mat.gripwood);
     sWood.position.set(0, -0.045, -0.18);
     smg.add(sWood);
-    const sFlash = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.5), flashMat);
+    const sFlash = this.buildFlash(star4, 0.44);
     sFlash.position.set(0, 0.01, -0.62);
-    sFlash.visible = false;
     smg.add(sFlash);
     smg.position.set(0.44, -0.4, -0.78);
     this.flashMeshes.push(sFlash);
@@ -1288,9 +1342,8 @@ export class Game {
     const mSight = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.045, 0.035), this.mat.brass);
     mSight.position.set(0, 0.08, -0.36);
     mag.add(mSight);
-    const mFlash = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.62), flashMat);
+    const mFlash = this.buildFlash(star8, 0.52);
     mFlash.position.set(0, 0.03, -0.52);
-    mFlash.visible = false;
     mag.add(mFlash);
     mag.position.set(0.44, -0.42, -0.78);
     this.flashMeshes.push(mFlash);
@@ -1313,9 +1366,8 @@ export class Game {
     const shRec = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.1, 0.16), this.mat.gunmetal);
     shRec.position.set(0, 0.03, 0.05);
     shotty.add(shRec);
-    const shFlash = new THREE.Mesh(new THREE.PlaneGeometry(0.75, 0.75), flashMat);
+    const shFlash = this.buildFlash(star8, 0.6);
     shFlash.position.set(0, 0.04, -0.58);
-    shFlash.visible = false;
     shotty.add(shFlash);
     shotty.position.set(0.44, -0.4, -0.78);
     this.flashMeshes.push(shFlash);
@@ -1341,9 +1393,8 @@ export class Game {
     rRocket.rotation.x = Math.PI / 2;
     rRocket.position.set(0, 0.02, -0.34);
     rpg.add(rRocket);
-    const rFlash = new THREE.Mesh(new THREE.PlaneGeometry(0.95, 0.95), flashMat);
+    const rFlash = this.buildFlash(star8, 0.78);
     rFlash.position.set(0, 0.02, -0.52);
-    rFlash.visible = false;
     rpg.add(rFlash);
     rpg.position.set(0.44, -0.44, -0.72);
     this.flashMeshes.push(rFlash);
@@ -1741,7 +1792,7 @@ export class Game {
     this.spawnBeam(e.group.position);
     this.spawnRing(e.group.position, 0x8dff3a, 3.2, 0.45);
     this.burst(this.v1.set(x, 1.2, z), 0x8dff3a, 8, 3.5);
-    this.fireEventLight(x, 2, z, 0x8dff3a, 110, 0.45);
+    this.fireEventLight(x, 2, z, 0x8dff3a, 90, 0.45);
     sfx.portal();
   }
 
@@ -1762,7 +1813,7 @@ export class Game {
     this.spawnRing(p, 0xc05aff, 9, 0.7);
     const b = this.spawnBeam(p, 0xc05aff);
     b.mesh.scale.set(2.4, 1, 2.4);
-    this.fireEventLight(p.x, 2.5, p.z, 0xc05aff, 300, 0.7);
+    this.fireEventLight(p.x, 2.5, p.z, 0xc05aff, 230, 0.7);
     this.shake += 0.5;
     this.hudSync();
   }
@@ -1812,7 +1863,7 @@ export class Game {
     this.burst(this.v1.set(p.x, 1.2, p.z), 0x6fdd2f, e.kind === "brute" ? 26 : 14, e.kind === "brute" ? 7 : 5.5);
     this.freeze = Math.max(this.freeze, e.boss ? 0.09 : e.kind === "brute" ? 0.05 : 0.028);
     this.fovKick += e.boss ? 2 : e.kind === "brute" ? 1.2 : 0.5;
-    this.fireEventLight(p.x, 1.6, p.z, e.boss ? 0xc05aff : 0x8dff3a, e.boss ? 260 : e.kind === "brute" ? 170 : 80, 0.3);
+    this.fireEventLight(p.x, 1.6, p.z, e.boss ? 0xc05aff : 0x8dff3a, e.boss ? 200 : e.kind === "brute" ? 130 : 60, 0.3);
     this.post.pulseKill(e.boss || e.kind === "brute");
     /* goo splat decals */
     const splats = e.kind === "brute" ? 3 : 2;
@@ -2136,7 +2187,7 @@ export class Game {
     /* burning drums flicker */
     const t = this.clock.elapsedTime;
     for (let i = 0; i < this.fireLights.length; i++) {
-      this.fireLights[i].intensity = 15 + Math.sin(t * 11 + i * 2.1) * 3.5 + Math.sin(t * 23 + i * 5) * 2;
+      this.fireLights[i].intensity = 10 + Math.sin(t * 11 + i * 2.1) * 2.5 + Math.sin(t * 23 + i * 5) * 1.5;
     }
     for (let i = 0; i < this.flames.length; i++) {
       const fl = this.flames[i];
@@ -2186,7 +2237,16 @@ export class Game {
     this.mags[this.weaponIdx]--;
     this.shootCd = w.rate;
     this.recoil = Math.min(1.4, this.recoil + w.recoil * 0.55);
-    this.flashT = 0.045;
+    /* muzzle flash: per-weapon duration, fresh roll + scale every shot */
+    this.flashT = [0.05, 0.07, 0.08, 0.1][this.weaponIdx];
+    const fg = this.flashMeshes[this.weaponIdx];
+    fg.rotation.z = rand(0, Math.PI * 2);
+    const fs =
+      this.weaponIdx === 0 ? rand(0.55, 0.95) :
+      this.weaponIdx === 1 ? rand(1.05, 1.5) :
+      this.weaponIdx === 2 ? rand(1.1, 1.5) : rand(1.4, 1.9);
+    if (this.weaponIdx === 2) fg.scale.set(fs * 1.6, fs * 0.85, 1);
+    else fg.scale.setScalar(fs);
     this.gunLight.intensity = this.weaponIdx === 1 ? 60 : 34;
     this.shake += w.kick;
     /* recoil springs: sustained SMG fire climbs, heavies punch + roll */
@@ -2209,6 +2269,8 @@ export class Game {
     const gun = this.guns[this.weaponIdx];
     const mz = [[0, 0.01, -0.62], [0, 0.03, -0.52], [0, 0.04, -0.58], [0, 0.02, -0.52]][this.weaponIdx];
     this.muzzleV.set(mz[0], mz[1], mz[2]).applyMatrix4(gun.matrixWorld);
+    /* hot sparks spit forward from the muzzle */
+    this.burst(this.muzzleV, 0xffd23f, this.weaponIdx === 0 ? 2 : 4, 3.4);
 
     if (w.kind === "rocket") {
       this.launchRocket();
@@ -2510,8 +2572,9 @@ export class Game {
     }
     /* flash + light */
     for (let i = 0; i < this.flashMeshes.length; i++) {
-      this.flashMeshes[i].visible = this.flashT > 0 && i === this.weaponIdx;
-      if (this.flashMeshes[i].visible) this.flashMeshes[i].rotation.z = rand(0, Math.PI * 2);
+      const on = this.flashT > 0 && i === this.weaponIdx;
+      this.flashMeshes[i].visible = on;
+      this.flashMats[i].opacity = on ? Math.min(1, this.flashT / 0.05) : 0;
     }
     this.gunLight.intensity = Math.max(0, this.gunLight.intensity - dt * 30);
     /* menu: gun hidden */
@@ -2785,7 +2848,7 @@ export class Game {
     this.shake += 1.0;
     this.spawnRing(at, 0xff9a2a, 8, 0.5);
     this.spawnRing(at, 0xfff2c8, 4.5, 0.3);
-    this.fireEventLight(at.x, at.y + 1.4, at.z, 0xff9a2a, 320, 0.4);
+    this.fireEventLight(at.x, at.y + 1.4, at.z, 0xff9a2a, 260, 0.4);
     this.burst(at, 0xff9a2a, 22, 8);
     this.burst(at, 0x666666, 12, 4.5);
     this.spawnDecal(this.v3.set(at.x, 0.02, at.z), this.v2.set(0, 1, 0), 0x100c08, 2.6, 14);
@@ -3022,7 +3085,7 @@ export class Game {
     sfx.nuke();
     this.post.flashNuke();
     this.shake += 1.4;
-    this.fireEventLight(this.pos.x, 3, this.pos.z, 0xfff2c8, 520, 0.9);
+    this.fireEventLight(this.pos.x, 3, this.pos.z, 0xfff2c8, 400, 0.9);
     this.spawnRing(this.pos, 0xfff2c8, 22, 0.9);
     this.spawnRing(this.pos, 0xff9a2a, 14, 0.6);
     this.burst(this.v1.set(this.pos.x, 2, this.pos.z), 0xfff2c8, 30, 9);
