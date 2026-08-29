@@ -261,6 +261,19 @@
   }
 }
 
+.boom-flash {
+  background: radial-gradient(ellipse at center, rgba(255,220,150,0.5), rgba(255,140,40,0.28) 55%, transparent 80%);
+  animation: boomflash 0.42s ease-out forwards;
+}
+@keyframes boomflash {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 .combo-pop {
   animation: combopop 0.28s cubic-bezier(0.2, 1.4, 0.4, 1) both;
 }

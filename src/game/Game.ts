@@ -288,8 +288,11 @@ export class Game {
   private flashMats: THREE.MeshBasicMaterial[] = [];
   private gunLight!: THREE.PointLight;
   private muzzleV = new THREE.Vector3();
-  /* explosion fireball domes */
-  private fireballs: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; life: number; dur: number; max: number }[] = [];
+  /* layered explosion FX: fireball shells, fire column, ground fire */
+  private fireballs: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; life: number; dur: number; max: number; rise: number; spin: number; peak: number; baseY: number }[] = [];
+  private pillars: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; life: number; dur: number; h: number; baseX: number }[] = [];
+  private fireDisks: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; life: number; dur: number; max: number }[] = [];
+  private fireballTex: THREE.CanvasTexture | null = null;
 
   /* temps */
   private raycaster = new THREE.Raycaster();
@@ -2078,13 +2081,13 @@ export class Game {
     d.mat.opacity = 0.85;
   }
 
-  private spawnRing(pos: THREE.Vector3, color: number, max: number, dur: number) {
+  private spawnRing(pos: THREE.Vector3, color: number, max: number, dur: number, delay = 0) {
     let r = this.rings.find((r) => r.t >= r.dur);
     if (!r) r = this.rings[0];
-    r.t = 0;
+    r.t = -delay;
     r.dur = dur;
     r.max = max;
-    r.mesh.visible = true;
+    r.mesh.visible = delay <= 0;
     r.mesh.position.set(pos.x, 0.08, pos.z);
     r.mat.color.set(color);
   }
@@ -2114,6 +2117,11 @@ export class Game {
     }
     for (const r of this.rings) {
       if (r.t >= r.dur) continue;
+      if (r.t < 0) {
+        r.t += dt;
+        if (r.t >= 0) r.mesh.visible = true;
+        continue;
+      }
       r.t += dt;
       const k = Math.min(1, r.t / r.dur);
       const s = 0.4 + k * r.max;
@@ -2209,14 +2217,46 @@ export class Game {
     }
   }
 
+  /* churning pixel-fire texture: white core → yellow → orange → char rim */
+  private makeFireballTexture(): THREE.CanvasTexture {
+    const c = document.createElement("canvas");
+    c.width = c.height = 64;
+    const g = c.getContext("2d")!;
+    const grad = g.createRadialGradient(32, 32, 2, 32, 32, 31);
+    grad.addColorStop(0, "#fff8e0");
+    grad.addColorStop(0.22, "#ffd23f");
+    grad.addColorStop(0.5, "#ff8a1a");
+    grad.addColorStop(0.8, "#e04010");
+    grad.addColorStop(1, "rgba(120,16,0,0)");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 64, 64);
+    /* pixel noise so the surface churns as it spins */
+    for (let i = 0; i < 420; i++) {
+      const x = Math.floor(Math.random() * 64);
+      const y = Math.floor(Math.random() * 64);
+      const d = Math.hypot(x - 32, y - 32);
+      if (d > 31) continue;
+      g.fillStyle = Math.random() > 0.5 ? "rgba(255,240,180,0.5)" : "rgba(120,20,0,0.55)";
+      g.fillRect(x, y, 2, 2);
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.magFilter = THREE.NearestFilter;
+    t.minFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+    return t;
+  }
+
   private initExplosions() {
+    this.fireballTex = this.makeFireballTexture();
     const domeGeo = new THREE.SphereGeometry(1, 14, 10);
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 15; i++) {
+      const additive = i % 3 === 2;
       const mat = new THREE.MeshBasicMaterial({
-        color: 0xff9a2a,
+        map: this.fireballTex,
+        color: 0xffffff,
         transparent: true,
         opacity: 0,
-        blending: THREE.AdditiveBlending,
+        blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
         depthWrite: false,
         side: THREE.DoubleSide,
       });
@@ -2224,18 +2264,102 @@ export class Game {
       mesh.visible = false;
       mesh.renderOrder = 5;
       this.scene.add(mesh);
-      this.fireballs.push({ mesh, mat, life: 0, dur: 1, max: 1 });
+      this.fireballs.push({ mesh, mat, life: 0, dur: 1, max: 1, rise: 2, spin: 0, peak: 1, baseY: 0 });
+    }
+    const colGeo = new THREE.CylinderGeometry(1, 1.5, 1, 10, 1, true);
+    for (let i = 0; i < 5; i++) {
+      const mat = new THREE.MeshBasicMaterial({
+        map: this.fireballTex,
+        color: 0xffb050,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(colGeo, mat);
+      mesh.visible = false;
+      mesh.renderOrder = 4;
+      this.scene.add(mesh);
+      this.pillars.push({ mesh, mat, life: 0, dur: 1, h: 10, baseX: 1 });
+    }
+    const diskGeo = new THREE.CircleGeometry(1, 22);
+    for (let i = 0; i < 5; i++) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0xff7a1a,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const mesh = new THREE.Mesh(diskGeo, mat);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.visible = false;
+      mesh.renderOrder = 4;
+      this.scene.add(mesh);
+      this.fireDisks.push({ mesh, mat, life: 0, dur: 1, max: 6 });
     }
   }
 
-  private fireFireball(pos: THREE.Vector3, color: number, max: number, dur: number) {
-    let f = this.fireballs.find((x) => x.life <= 0);
-    if (!f) f = this.fireballs[0];
-    f.mesh.visible = true;
-    f.mesh.position.set(pos.x, Math.max(0.3, pos.y), pos.z);
-    f.mat.color.set(color);
-    f.life = f.dur = dur;
-    f.max = max;
+  /* one detonation = three stacked fireball shells */
+  private fireExplosion(pos: THREE.Vector3) {
+    /* max, dur, rise, spin, peak, tint */
+    const layers: [number, number, number, number, number, number][] = [
+      [5.6, 0.5, 3.2, 4.5, 1.0, 0xffffff],
+      [7.4, 0.62, 2.5, -3.2, 0.85, 0xffc070],
+      [9.2, 0.78, 1.8, 2.2, 0.6, 0xff7030],
+    ];
+    for (const L of layers) {
+      let f = this.fireballs.find((x) => x.life <= 0);
+      if (!f) f = this.fireballs[0];
+      f.mesh.visible = true;
+      f.baseY = Math.max(0.4, pos.y);
+      f.mesh.position.set(pos.x, f.baseY, pos.z);
+      f.mesh.scale.set(0.01, 0.01, 0.01);
+      f.mat.color.set(L[5]);
+      f.life = f.dur = L[1];
+      f.max = L[0];
+      f.rise = L[2];
+      f.spin = L[3];
+      f.peak = L[4];
+      f.mesh.rotation.set(rand(0, 3), rand(0, 3), 0);
+    }
+  }
+
+  private firePillar(pos: THREE.Vector3) {
+    let p = this.pillars.find((x) => x.life <= 0);
+    if (!p) p = this.pillars[0];
+    p.mesh.visible = true;
+    p.baseX = pos.x;
+    p.mesh.position.set(pos.x, 0, pos.z);
+    p.mesh.scale.set(0.2, 0.01, 0.2);
+    p.life = p.dur = 0.6;
+    p.h = 11;
+  }
+
+  private fireDisk(pos: THREE.Vector3) {
+    let d = this.fireDisks.find((x) => x.life <= 0);
+    if (!d) d = this.fireDisks[0];
+    d.mesh.visible = true;
+    d.mesh.position.set(pos.x, 0.06, pos.z);
+    d.mesh.scale.set(0.2, 0.2, 1);
+    d.life = d.dur = 0.85;
+    d.max = 6.8;
+  }
+
+  /* slow-rising drifting embers */
+  private embers(pos: THREE.Vector3, count: number) {
+    for (let i = 0; i < count; i++) {
+      const p = this.particles[this.pIndex];
+      this.pIndex = (this.pIndex + 1) % this.particles.length;
+      p.active = true;
+      p.pos.copy(pos).add(this.v3.set(rand(-1.3, 1.3), rand(0, 1.2), rand(-1.3, 1.3)));
+      p.vel.set(rand(-0.7, 0.7), rand(1.6, 3.6), rand(-0.7, 0.7));
+      p.maxLife = p.life = rand(1.0, 1.8);
+      p.size = rand(0.35, 0.6);
+      p.color.set(Math.random() > 0.4 ? 0xff9a2a : 0xffd23f);
+      p.grav = -1.4;
+    }
   }
 
   private updateExplosions(dt: number) {
@@ -2247,9 +2371,40 @@ export class Game {
         continue;
       }
       const t = 1 - f.life / f.dur;
-      const s = Math.max(0.001, f.max * (1 - Math.pow(1 - t, 2.2)));
-      f.mesh.scale.set(s, s * 0.85, s);
-      f.mat.opacity = 0.95 * (1 - t);
+      const s = Math.max(0.01, f.max * (1 - Math.pow(1 - t, 2.4)));
+      f.mesh.scale.set(s, s * 0.9, s);
+      f.mesh.position.y = f.baseY + t * t * f.rise;
+      f.mesh.rotation.y += f.spin * dt;
+      f.mesh.rotation.x += f.spin * 0.4 * dt;
+      const fadeIn = Math.min(1, t / 0.08);
+      f.mat.opacity = f.peak * fadeIn * (1 - t * t);
+    }
+    for (const p of this.pillars) {
+      if (p.life <= 0) continue;
+      p.life -= dt;
+      if (p.life <= 0) {
+        p.mesh.visible = false;
+        continue;
+      }
+      const t = 1 - p.life / p.dur;
+      const e = 1 - Math.pow(1 - t, 2.5);
+      const w = 1.4 + e * 1.9;
+      p.mesh.scale.set(w, Math.max(0.01, p.h * e), w);
+      p.mesh.position.y = p.h * e * 0.5;
+      p.mesh.rotation.y += dt * 1.4;
+      p.mat.opacity = 0.55 * (1 - t) * Math.min(1, t / 0.1);
+    }
+    for (const d of this.fireDisks) {
+      if (d.life <= 0) continue;
+      d.life -= dt;
+      if (d.life <= 0) {
+        d.mesh.visible = false;
+        continue;
+      }
+      const t = 1 - d.life / d.dur;
+      const s = Math.max(0.2, d.max * (1 - Math.pow(1 - t, 2)));
+      d.mesh.scale.set(s, s, 1);
+      d.mat.opacity = 0.5 * (1 - t);
     }
   }
 
@@ -2894,25 +3049,31 @@ export class Game {
 
   private explodeRocket(at: THREE.Vector3) {
     sfx.boom();
+    sfx.crack();
     sfx.rumble();
-    this.shake += 1.15;
-    this.freeze = Math.max(this.freeze, 0.05);
-    this.fovKick += 2.2;
-    /* layered fireball: hot orange core + pale white-hot shell */
-    this.fireFireball(at, 0xff9a2a, 3.8, 0.36);
-    this.fireFireball(at, 0xfff2c8, 2.3, 0.26);
-    /* pressure wall + dust shockwave + inner flash ring */
-    this.spawnRing(at, 0xffd2a0, 11, 0.5);
-    this.spawnRing(at, 0xd8b27a, 8, 0.65);
-    this.spawnRing(at, 0xfff2c8, 4.5, 0.28);
+    this.shake += 1.5;
+    this.freeze = Math.max(this.freeze, 0.075);
+    this.fovKick += 3.2;
+    hud.set({ boomId: hud.get().boomId + 1 });
+    /* fireball: three stacked churning shells — core, mid, outer */
+    this.fireExplosion(at);
+    /* rising fire column + spreading ground fire */
+    this.firePillar(at);
+    this.fireDisk(at);
+    /* shockwaves: inner flash, main pressure wall, delayed dust + outer pressure */
+    this.spawnRing(at, 0xfff2c8, 5.5, 0.3);
+    this.spawnRing(at, 0xffd2a0, 14, 0.55);
+    this.spawnRing(at, 0xd8b27a, 10, 0.7, 0.12);
+    this.spawnRing(at, 0xff9a5a, 17, 0.9, 0.22);
     /* twin light surge — fireball lift + ground scorch */
-    this.fireEventLight(at.x, at.y + 1.6, at.z, 0xffa030, 320, 0.5);
-    this.fireEventLight(at.x, at.y + 0.5, at.z, 0xff5a1a, 170, 0.32);
-    /* debris: fire sparks, fast embers, slow heavy smoke */
-    this.burst(at, 0xff9a2a, 20, 8.5);
-    this.burst(at, 0xffc040, 14, 10.5);
-    this.burst(this.v3.set(at.x, at.y + 0.5, at.z), 0x3a3632, 16, 2.6, 1.5);
-    this.spawnDecal(this.v3.set(at.x, 0.02, at.z), this.v2.set(0, 1, 0), 0x100c08, 2.8, 14);
+    this.fireEventLight(at.x, at.y + 2, at.z, 0xffa030, 420, 0.55);
+    this.fireEventLight(at.x, at.y + 0.6, at.z, 0xff5a1a, 220, 0.35);
+    /* debris: fire sparks, fast embers, drifting embers, slow heavy smoke */
+    this.burst(at, 0xff9a2a, 24, 9);
+    this.burst(at, 0xffc040, 16, 11);
+    this.embers(this.v3.set(at.x, at.y + 0.5, at.z), 16);
+    this.burst(this.v3.set(at.x, at.y + 0.4, at.z), 0x3a3632, 18, 2.6, 1.5);
+    this.spawnDecal(this.v3.set(at.x, 0.02, at.z), this.v2.set(0, 1, 0), 0x100c08, 3.0, 14);
     for (const e of [...this.enemies]) {
       if (e.dying) continue;
       const ep = e.group.position;

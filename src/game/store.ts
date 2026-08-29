@@ -63,6 +63,7 @@ let s: Hud = {
   hitId: 0,
   dmgId: 0,
   nukeId: 0,
+  boomId: 0,
   bossHp: 0,
   bossName: "",
 };
