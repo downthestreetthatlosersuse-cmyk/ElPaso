@@ -1086,13 +1086,83 @@ export class Game {
   }
 
   private buildLights() {
-    this.scene.add(new THREE.HemisphereLight(0xff9a5c, 0x3a1a4a, 0.9));
-    const sun = new THREE.DirectionalLight(0xffb066, 1.2);
-    sun.position.set(-60, 45, -80);
+    this.scene.add(new THREE.HemisphereLight(0xff9a5c, 0x2a1240, 0.72));
+    /* low dusk sun — casts long shadows across the town */
+    const sun = new THREE.DirectionalLight(0xffb066, 1.55);
+    sun.position.set(-70, 34, -55);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.camera.left = -105;
+    sun.shadow.camera.right = 105;
+    sun.shadow.camera.top = 105;
+    sun.shadow.camera.bottom = -105;
+    sun.shadow.camera.near = 10;
+    sun.shadow.camera.far = 230;
+    sun.shadow.bias = -0.0009;
+    sun.shadow.normalBias = 0.6;
+    sun.shadow.camera.updateProjectionMatrix();
     this.scene.add(sun);
+    /* cool purple rim from the east — dusk depth */
+    const rim = new THREE.DirectionalLight(0x6a4aff, 0.35);
+    rim.position.set(65, 40, 70);
+    this.scene.add(rim);
     this.gunLight = new THREE.PointLight(0xffa640, 0, 16, 2);
     this.gunLight.position.set(0.35, -0.15, -1.2);
     this.camera.add(this.gunLight);
+  }
+
+  private initDynamicLights() {
+    /* pooled event lights: explosions, kills, portals */
+    for (let i = 0; i < 5; i++) {
+      const l = new THREE.PointLight(0xffffff, 0, 26, 2);
+      l.visible = false;
+      this.scene.add(l);
+      this.eventLights.push({ light: l, life: 0, max: 1, base: 0 });
+    }
+    /* burning drums */
+    for (const p of this.fireBarrelSpots) {
+      const l = new THREE.PointLight(0xff7a2a, 14, 11, 2);
+      l.position.copy(p);
+      this.scene.add(l);
+      this.fireLights.push(l);
+    }
+  }
+
+  private fireEventLight(x: number, y: number, z: number, color: number, intensity: number, life: number) {
+    let slot = this.eventLights[0];
+    for (const e of this.eventLights) {
+      if (e.life <= 0) {
+        slot = e;
+        break;
+      }
+    }
+    slot.light.visible = true;
+    slot.light.color.set(color);
+    slot.light.position.set(x, y, z);
+    slot.base = intensity;
+    slot.max = life;
+    slot.life = life;
+  }
+
+  private enableShadows() {
+    this.scene.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || m.userData.noShadow) return;
+      const mat = m.material as THREE.Material;
+      if (mat && (mat as THREE.MeshBasicMaterial).transparent) return;
+      m.castShadow = true;
+      m.receiveShadow = true;
+    });
+  }
+
+  private shadowify(root: THREE.Object3D) {
+    root.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (m.isMesh) {
+        m.castShadow = true;
+        m.receiveShadow = true;
+      }
+    });
   }
 
   private makeFlashTexture(): THREE.CanvasTexture {
