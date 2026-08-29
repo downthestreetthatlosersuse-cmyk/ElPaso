@@ -29,6 +29,7 @@ export interface Hud {
   hitId: number;
   dmgId: number;
   nukeId: number;
+  boomId: number;
   bossHp: number;
   bossName: string;
 }
