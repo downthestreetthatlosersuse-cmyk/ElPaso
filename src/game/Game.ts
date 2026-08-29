@@ -2463,7 +2463,7 @@ export class Game {
     if (w.rollKick >= 2) {
       this.rollSign *= -1;
       this.gunRoll = w.rollKick * 0.03 * this.rollSign;
-      this.shake += w.kind === "rocket" ? 0.4 : 0.25;
+      this.shake += w.kind === "rocket" ? 0.26 : 0.25;
     }
     w.sound();
     if (w.kind !== "rocket") this.casing();
@@ -3066,10 +3066,10 @@ export class Game {
     sfx.boom();
     sfx.crack();
     sfx.rumble();
-    this.shake += 2.2;
-    this.shakeR += 0.17;
+    this.shake += 0.9;
+    this.shakeR += 0.06;
     this.freeze = Math.max(this.freeze, 0.075);
-    this.fovKick += 3.2;
+    this.fovKick += 1.8;
     hud.set({ boomId: hud.get().boomId + 1 });
     /* fireball: three stacked churning shells — core, mid, outer */
     this.fireExplosion(at);
@@ -3322,8 +3322,8 @@ export class Game {
     hud.set({ nukeId: hud.get().nukeId + 1 });
     sfx.nuke();
     this.post.flashNuke();
-    this.shake += 2.0;
-    this.shakeR += 0.2;
+    this.shake += 0.8;
+    this.shakeR += 0.07;
     this.fireEventLight(this.pos.x, 3, this.pos.z, 0xfff2c8, 400, 0.9);
     this.spawnRing(this.pos, 0xfff2c8, 22, 0.9);
     this.spawnRing(this.pos, 0xff9a2a, 14, 0.6);
