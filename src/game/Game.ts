@@ -288,6 +288,8 @@ export class Game {
   private flashMats: THREE.MeshBasicMaterial[] = [];
   private gunLight!: THREE.PointLight;
   private muzzleV = new THREE.Vector3();
+  /* explosion fireball domes */
+  private fireballs: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; life: number; dur: number; max: number }[] = [];
 
   /* temps */
   private raycaster = new THREE.Raycaster();
@@ -2206,6 +2208,50 @@ export class Game {
     }
   }
 
+  private initExplosions() {
+    const domeGeo = new THREE.SphereGeometry(1, 14, 10);
+    for (let i = 0; i < 10; i++) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0xff9a2a,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(domeGeo, mat);
+      mesh.visible = false;
+      mesh.renderOrder = 5;
+      this.scene.add(mesh);
+      this.fireballs.push({ mesh, mat, life: 0, dur: 1, max: 1 });
+    }
+  }
+
+  private fireFireball(pos: THREE.Vector3, color: number, max: number, dur: number) {
+    let f = this.fireballs.find((x) => x.life <= 0);
+    if (!f) f = this.fireballs[0];
+    f.mesh.visible = true;
+    f.mesh.position.set(pos.x, Math.max(0.3, pos.y), pos.z);
+    f.mat.color.set(color);
+    f.life = f.dur = dur;
+    f.max = max;
+  }
+
+  private updateExplosions(dt: number) {
+    for (const f of this.fireballs) {
+      if (f.life <= 0) continue;
+      f.life -= dt;
+      if (f.life <= 0) {
+        f.mesh.visible = false;
+        continue;
+      }
+      const t = 1 - f.life / f.dur;
+      const s = Math.max(0.001, f.max * (1 - Math.pow(1 - t, 2.2)));
+      f.mesh.scale.set(s, s * 0.85, s);
+      f.mat.opacity = 0.95 * (1 - t);
+    }
+  }
+
   private updateCombo(dt: number) {
     if (this.streakT > 0) {
       this.streakT -= dt;
@@ -2247,7 +2293,7 @@ export class Game {
       this.weaponIdx === 2 ? rand(1.1, 1.5) : rand(1.4, 1.9);
     if (this.weaponIdx === 2) fg.scale.set(fs * 1.6, fs * 0.85, 1);
     else fg.scale.setScalar(fs);
-    this.gunLight.intensity = this.weaponIdx === 1 ? 60 : 34;
+    this.gunLight.intensity = this.weaponIdx === 1 ? 42 : 26;
     this.shake += w.kick;
     /* recoil springs: sustained SMG fire climbs, heavies punch + roll */
     this.kickPV += w.pitchKick * rand(0.85, 1.15);
@@ -2263,7 +2309,7 @@ export class Game {
     document.documentElement.style.setProperty("--spr", `${Math.round(6 + this.recoil * 14)}px`);
     this.muzzleSmoke(this.weaponIdx === 0 ? 1 : 2);
     this.fovKick += w.fovKick;
-    this.gunLight.intensity = w.kind === "rocket" ? 90 : this.gunLight.intensity;
+    this.gunLight.intensity = w.kind === "rocket" ? 55 : this.gunLight.intensity;
 
     /* muzzle world position */
     const gun = this.guns[this.weaponIdx];
@@ -2576,7 +2622,9 @@ export class Game {
       this.flashMeshes[i].visible = on;
       this.flashMats[i].opacity = on ? Math.min(1, this.flashT / 0.05) : 0;
     }
-    this.gunLight.intensity = Math.max(0, this.gunLight.intensity - dt * 30);
+    /* muzzle light: sharp exponential falloff — flash, not lamp */
+    this.gunLight.intensity *= Math.exp(-dt * 44);
+    if (this.gunLight.intensity < 0.6) this.gunLight.intensity = 0;
     /* menu: gun hidden */
     this.gunGroup.visible = this.state === "playing" || this.state === "paused";
   }
@@ -2845,13 +2893,25 @@ export class Game {
 
   private explodeRocket(at: THREE.Vector3) {
     sfx.boom();
-    this.shake += 1.0;
-    this.spawnRing(at, 0xff9a2a, 8, 0.5);
-    this.spawnRing(at, 0xfff2c8, 4.5, 0.3);
-    this.fireEventLight(at.x, at.y + 1.4, at.z, 0xff9a2a, 260, 0.4);
-    this.burst(at, 0xff9a2a, 22, 8);
-    this.burst(at, 0x666666, 12, 4.5);
-    this.spawnDecal(this.v3.set(at.x, 0.02, at.z), this.v2.set(0, 1, 0), 0x100c08, 2.6, 14);
+    sfx.rumble();
+    this.shake += 1.15;
+    this.freeze = Math.max(this.freeze, 0.05);
+    this.fovKick += 2.2;
+    /* layered fireball: hot orange core + pale white-hot shell */
+    this.fireFireball(at, 0xff9a2a, 3.8, 0.36);
+    this.fireFireball(at, 0xfff2c8, 2.3, 0.26);
+    /* pressure wall + dust shockwave + inner flash ring */
+    this.spawnRing(at, 0xffd2a0, 11, 0.5);
+    this.spawnRing(at, 0xd8b27a, 8, 0.65);
+    this.spawnRing(at, 0xfff2c8, 4.5, 0.28);
+    /* twin light surge — fireball lift + ground scorch */
+    this.fireEventLight(at.x, at.y + 1.6, at.z, 0xffa030, 320, 0.5);
+    this.fireEventLight(at.x, at.y + 0.5, at.z, 0xff5a1a, 170, 0.32);
+    /* debris: fire sparks, fast embers, slow heavy smoke */
+    this.burst(at, 0xff9a2a, 20, 8.5);
+    this.burst(at, 0xffc040, 14, 10.5);
+    this.burst(this.v3.set(at.x, at.y + 0.5, at.z), 0x3a3632, 16, 2.6, 1.5);
+    this.spawnDecal(this.v3.set(at.x, 0.02, at.z), this.v2.set(0, 1, 0), 0x100c08, 2.8, 14);
     for (const e of [...this.enemies]) {
       if (e.dying) continue;
       const ep = e.group.position;
