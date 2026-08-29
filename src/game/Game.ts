@@ -576,6 +576,7 @@ export class Game {
       new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false })
     );
     sky.userData.noShadow = true;
+    sky.layers.enable(1); /* god-ray source layer */
     this.scene.add(sky);
 
     /* sun */
@@ -594,6 +595,7 @@ export class Game {
     );
     sun.scale.set(110, 110, 1);
     sun.position.set(-160, 62, -250);
+    sun.layers.enable(1); /* god-ray source layer */
     this.scene.add(sun);
 
     /* stars */
@@ -618,6 +620,7 @@ export class Game {
       const m = new THREE.Mesh(new THREE.ConeGeometry(rand(22, 42), h, 5), this.mat.mountain);
       m.position.set(Math.cos(a) * r, h / 2 - 1, Math.sin(a) * r);
       m.rotation.y = rand(0, 3);
+      m.layers.enable(1); /* occlude the god rays like real silhouettes */
       this.scene.add(m);
     }
   }

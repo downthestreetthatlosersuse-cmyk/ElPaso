@@ -202,10 +202,14 @@ export function createPostFX(
     aber = Math.max(0, aber - dt * 5);
     hit = Math.max(0, hit - dt * 6);
 
-    /* low-res occlusion render for the light streaks */
+    /* low-res occlusion render for the light streaks —
+       ONLY sky + sun (layer 1) feed the god rays, not stars/particles/neon */
+    const prevMask = cam.layers.mask;
+    cam.layers.mask = 2;
     renderer.setRenderTarget(lowRT);
     renderer.render(scene, cam);
     renderer.setRenderTarget(null);
+    cam.layers.mask = prevMask;
 
     /* project the sun into screen space */
     proj.copy(sunPos).project(cam);
