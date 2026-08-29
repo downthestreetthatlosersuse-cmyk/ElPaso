@@ -7,14 +7,16 @@ const W = 640;
 const H = 360;
 const WORLD_R = 92;
 
-type EnemyKind = "grunt" | "brute" | "spitter";
+type EnemyKind = "grunt" | "brute" | "spitter" | "boss";
 
 interface WeaponDef {
   name: string;
+  kind: "hitscan" | "rocket";
   dmg: number;
   rate: number;
   magSize: number;
   spread: number;
+  pellets: number;
   reloadTime: number;
   recoil: number;
   kick: number;
@@ -24,8 +26,10 @@ interface WeaponDef {
 }
 
 const WEAPONS: WeaponDef[] = [
-  { name: "RATTLER SMG", dmg: 11, rate: 0.095, magSize: 32, spread: 0.024, reloadTime: 1.5, recoil: 0.3, kick: 0.014, pitchKick: 1.35, rollKick: 0.5, sound: () => sfx.smg() },
-  { name: "JUDGE MAGNUM", dmg: 62, rate: 0.42, magSize: 6, spread: 0.005, reloadTime: 1.9, recoil: 1.2, kick: 0.06, pitchKick: 5.2, rollKick: 2.6, sound: () => sfx.magnum() },
+  { name: "RATTLER SMG", kind: "hitscan", dmg: 11, rate: 0.095, magSize: 32, spread: 0.024, pellets: 1, reloadTime: 1.5, recoil: 0.3, kick: 0.014, pitchKick: 1.35, rollKick: 0.5, sound: () => sfx.smg() },
+  { name: "JUDGE MAGNUM", kind: "hitscan", dmg: 62, rate: 0.42, magSize: 6, spread: 0.005, pellets: 1, reloadTime: 1.9, recoil: 1.2, kick: 0.06, pitchKick: 5.2, rollKick: 2.6, sound: () => sfx.magnum() },
+  { name: "PUMPER-8", kind: "hitscan", dmg: 11, rate: 0.78, magSize: 8, spread: 0.06, pellets: 8, reloadTime: 2.2, recoil: 0.95, kick: 0.05, pitchKick: 4.2, rollKick: 2.2, sound: () => sfx.shotgun() },
+  { name: "BOOMSTICK", kind: "rocket", dmg: 130, rate: 1.0, magSize: 1, spread: 0.004, pellets: 1, reloadTime: 2.4, recoil: 1.4, kick: 0.09, pitchKick: 6.5, rollKick: 3.4, sound: () => sfx.launch() },
 ];
 
 const ENEMY_DEFS: Record<
@@ -35,7 +39,17 @@ const ENEMY_DEFS: Record<
   grunt: { hp: 26, speed: 3.3, dmg: 8, score: 100, radius: 0.7 },
   spitter: { hp: 44, speed: 2.7, dmg: 12, score: 150, radius: 0.75 },
   brute: { hp: 130, speed: 1.7, dmg: 22, score: 300, radius: 1.2 },
+  boss: { hp: 720, speed: 1.9, dmg: 30, score: 1500, radius: 1.9 },
 };
+
+const STREAKS: [number, string][] = [
+  [2, "DOUBLE KILL"],
+  [3, "TRIPLE KILL"],
+  [4, "MEGA KILL"],
+  [5, "KILLING SPREE"],
+  [7, "RAMPAGE"],
+  [10, "UNSTOPPABLE"],
+];
 
 const WAVE_LINES = [
   "COME GET SOME!",
@@ -51,6 +65,7 @@ const KILL_LINES: Record<EnemyKind, string[]> = {
   grunt: ["ALIEN SCUM SPLATTERED", "GREEN GOO EVERYWHERE", "ONE LESS VERDE", "SPLAT. NEXT."],
   spitter: ["SPITTER SPIT HIS LAST", "MOUTH SHUT FOR GOOD", "ACID REFUND ISSUED"],
   brute: ["BRUTE DROPPED", "BIG UGLY, BIG MESS", "THAT ONE'S GONNA STAIN"],
+  boss: ["EL JEFE IS DOWN. THE PLAZA IS OURS.", "KING OF THE HORDE? NOT ANYMORE."],
 };
 
 interface AABB {
@@ -79,6 +94,17 @@ interface Enemy {
   hitMeshes: THREE.Mesh[];
   hitPop: number;
   baseScale: THREE.Vector3;
+  groupBase: number;
+  leapT: number;
+  leapCd: number;
+  leapVX: number;
+  leapVZ: number;
+  chargeT: number;
+  chargeCd: number;
+  chargeDX: number;
+  chargeDZ: number;
+  chargeHit: boolean;
+  boss: boolean;
 }
 
 interface Decal {
@@ -112,7 +138,7 @@ interface Projectile {
 
 interface Pickup {
   group: THREE.Group;
-  kind: "health" | "ammo";
+  kind: "health" | "ammo" | "nuke";
   t: number;
   life: number;
   active: boolean;
@@ -172,8 +198,16 @@ export class Game {
   private bobT = 0;
   private shake = 0;
   private weaponIdx = 0;
-  private mags = [32, 6];
-  private reserves = [160, 36];
+  private mags = [32, 6, 8, 1];
+  private reserves = [160, 36, 32, 9];
+  /* killstreak */
+  private streakCount = 0;
+  private streakT = 0;
+  /* rockets */
+  private rockets: { g: THREE.Group; vel: THREE.Vector3; active: boolean; life: number; spin: number }[] = [];
+  /* ufo drop event */
+  private ufoEvt = -1;
+  private ufoEvtSpawned = false;
   private shootCd = 0;
   private reloading = false;
   private reloadT = 0;
@@ -694,8 +728,63 @@ export class Game {
     mag.position.set(0.44, -0.42, -0.78);
     this.flashMeshes.push(mFlash);
 
-    this.guns = [smg, mag];
-    this.gunGroup.add(smg, mag);
+    /* PUMPER-8 shotgun */
+    const shotty = new THREE.Group();
+    const shBarrel = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.075, 0.52), this.mat.gundark);
+    shBarrel.position.set(0, 0.04, -0.2);
+    shotty.add(shBarrel);
+    const shTube = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.055, 0.4), this.mat.gunmetal);
+    shTube.position.set(0, -0.035, -0.16);
+    shotty.add(shTube);
+    const shPump = new THREE.Mesh(new THREE.BoxGeometry(0.095, 0.085, 0.18), this.mat.gripwood);
+    shPump.position.set(0, -0.03, -0.3);
+    shotty.add(shPump);
+    const shStock = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.13, 0.26), this.mat.gripwood);
+    shStock.position.set(0, -0.02, 0.24);
+    shStock.rotation.x = 0.12;
+    shotty.add(shStock);
+    const shRec = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.1, 0.16), this.mat.gunmetal);
+    shRec.position.set(0, 0.03, 0.05);
+    shotty.add(shRec);
+    const shFlash = new THREE.Mesh(new THREE.PlaneGeometry(0.75, 0.75), flashMat);
+    shFlash.position.set(0, 0.04, -0.58);
+    shFlash.visible = false;
+    shotty.add(shFlash);
+    shotty.position.set(0.44, -0.4, -0.78);
+    this.flashMeshes.push(shFlash);
+
+    /* BOOMSTICK rocket launcher */
+    const rpg = new THREE.Group();
+    const rTube = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.085, 0.62, 10), this.lambert(0x4a5a3a));
+    rTube.rotation.x = Math.PI / 2;
+    rTube.position.set(0, 0.02, -0.1);
+    rpg.add(rTube);
+    const rMouth = new THREE.Mesh(new THREE.CylinderGeometry(0.088, 0.088, 0.06, 10), this.mat.gundark);
+    rMouth.rotation.x = Math.PI / 2;
+    rMouth.position.set(0, 0.02, -0.42);
+    rpg.add(rMouth);
+    const rGrip = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.13, 0.08), this.mat.gripwood);
+    rGrip.position.set(0, -0.1, 0.06);
+    rGrip.rotation.x = -0.3;
+    rpg.add(rGrip);
+    const rSight = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.06, 0.04), this.mat.brass);
+    rSight.position.set(0, 0.12, -0.2);
+    rpg.add(rSight);
+    const rRocket = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.2, 8), this.mat.metal);
+    rRocket.rotation.x = Math.PI / 2;
+    rRocket.position.set(0, 0.02, -0.34);
+    rpg.add(rRocket);
+    const rFlash = new THREE.Mesh(new THREE.PlaneGeometry(0.95, 0.95), flashMat);
+    rFlash.position.set(0, 0.02, -0.52);
+    rFlash.visible = false;
+    rpg.add(rFlash);
+    rpg.position.set(0.44, -0.44, -0.72);
+    this.flashMeshes.push(rFlash);
+
+    this.guns = [smg, mag, shotty, rpg];
+    this.gunGroup.add(smg, mag, shotty, rpg);
+    shotty.visible = false;
+    rpg.visible = false;
     mag.visible = false;
     this.camera.add(this.gunGroup);
   }
@@ -846,6 +935,22 @@ export class Game {
       new THREE.PointsMaterial({ color: 0xffc890, size: 0.11, transparent: true, opacity: 0.4, depthWrite: false, blending: THREE.AdditiveBlending })
     );
     this.scene.add(this.dust);
+
+    /* rockets */
+    for (let i = 0; i < 6; i++) {
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.42, 8), this.mat.metal);
+      g.add(body);
+      const tip = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.16, 8), this.lambert(0xd04020));
+      tip.position.y = 0.29;
+      g.add(tip);
+      const glow = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 5), new THREE.MeshBasicMaterial({ color: 0xffa040 }));
+      glow.position.y = -0.27;
+      g.add(glow);
+      g.visible = false;
+      this.scene.add(g);
+      this.rockets.push({ g, vel: new THREE.Vector3(), active: false, life: 0, spin: 0 });
+    }
   }
 
   /* ------------------------------------------------ entities */
@@ -867,6 +972,7 @@ export class Game {
 
     if (kind === "grunt") {
       const body = new THREE.Mesh(this.geo.gruntBody, this.mat.alienGreen);
+      /* grunt body base scale set below */
       body.position.y = 0.95;
       body.scale.set(1, 1.25, 0.9);
       baseScale.set(1, 1.25, 0.9);
@@ -889,8 +995,8 @@ export class Game {
       }
       parts.body = body;
       addShadow(1);
-    } else if (kind === "brute") {
-      const body = new THREE.Mesh(this.geo.bruteBody, this.mat.brutePurple);
+    } else if (kind === "brute" || kind === "boss") {
+      const body = new THREE.Mesh(this.geo.bruteBody, kind === "boss" ? this.lambert(0x9c2fde) : this.mat.brutePurple);
       body.position.y = 1.15;
       g.add(body);
       hitMeshes.push(body);
@@ -940,6 +1046,19 @@ export class Game {
       addShadow(1.1);
     }
 
+    if (kind === "boss") {
+      for (const s of [-1, 0, 1]) {
+        const horn = new THREE.Mesh(this.geo.horn, this.mat.brass);
+        horn.position.set(0.32 * s, 2.72, 0.05);
+        horn.rotation.z = -s * 0.45;
+        g.add(horn);
+      }
+      const sac = new THREE.Mesh(this.geo.sac, this.basic.sac);
+      sac.position.set(0, 1.2, -0.55);
+      g.add(sac);
+      parts.sac = sac;
+    }
+
     const e: Enemy = {
       kind,
       group: g,
@@ -959,8 +1078,20 @@ export class Game {
       hitMeshes,
       hitPop: 0,
       baseScale,
+      groupBase: kind === "boss" ? 1.5 : 1,
+      leapT: 0,
+      leapCd: rand(2, 4),
+      leapVX: 0,
+      leapVZ: 0,
+      chargeT: 0,
+      chargeCd: rand(3, 5),
+      chargeDX: 0,
+      chargeDZ: 0,
+      chargeHit: false,
+      boss: kind === "boss",
     };
     for (const m of hitMeshes) m.userData.e = e;
+    if (kind === "boss") g.scale.set(1.5, 1.5, 1.5);
     g.position.set(x, 0, z);
     this.scene.add(g);
     this.hitList.push(...hitMeshes);
@@ -968,11 +1099,11 @@ export class Game {
     return e;
   }
 
-  private spawnEnemy(kind: EnemyKind) {
+  private spawnEnemy(kind: EnemyKind, fx?: number, fz?: number) {
     const a = rand(0, Math.PI * 2);
     const r = rand(38, 52);
-    const x = Math.max(-WORLD_R, Math.min(WORLD_R, this.pos.x + Math.cos(a) * r));
-    const z = Math.max(-WORLD_R + 4, Math.min(WORLD_R, this.pos.z + Math.sin(a) * r));
+    const x = fx !== undefined ? fx : Math.max(-WORLD_R, Math.min(WORLD_R, this.pos.x + Math.cos(a) * r));
+    const z = fz !== undefined ? fz : Math.max(-WORLD_R + 4, Math.min(WORLD_R, this.pos.z + Math.sin(a) * r));
     const e = this.buildEnemy(kind, x, z);
     const wmul = 1 + (this.wave - 1) * 0.09;
     e.hp = Math.round(ENEMY_DEFS[kind].hp * wmul);
@@ -989,6 +1120,50 @@ export class Game {
     this.buildEnemy("brute", 18, -20);
     this.buildEnemy("spitter", -20, -16);
     this.buildEnemy("spitter", 12, 22);
+  }
+
+  private spawnBoss() {
+    const a = rand(0, Math.PI * 2);
+    const e = this.buildEnemy("boss", Math.cos(a) * 44, -78 + Math.sin(a) * 6);
+    e.hp = Math.round(ENEMY_DEFS.boss.hp * (1 + this.wave * 0.04));
+    hud.banner("EL JEFE HAS ARRIVED", "BRING THE BOOMSTICK, TEX.");
+    sfx.boss();
+    const p = e.group.position;
+    this.spawnRing(p, 0xc05aff, 9, 0.7);
+    const b = this.spawnBeam(p, 0xc05aff);
+    b.mesh.scale.set(2.4, 1, 2.4);
+    this.shake += 0.5;
+    this.hudSync();
+  }
+
+  private updateUfo(dt: number) {
+    if (this.ufoEvt < 0) return;
+    const first = this.ufoEvt === 0;
+    this.ufoEvt += dt;
+    const u = this.ufos[0];
+    if (first) {
+      hud.banner("UFO SIGHTED", "DROP ZONE: LA PLAZA");
+      sfx.portal();
+      const b = this.spawnBeam(this.v3.set(0, 0, -30), 0xb46aff);
+      b.mesh.scale.set(2.6, 1, 2.6);
+    }
+    this.v1.set(0, 16, -30);
+    u.g.position.lerp(this.v1, Math.min(1, dt * 2.4));
+    u.g.rotation.y += dt * 2.4;
+    for (let i = 0; i < u.lights.length; i++) u.lights[i].visible = true;
+    if (this.ufoEvt >= 1.1 && !this.ufoEvtSpawned) {
+      this.ufoEvtSpawned = true;
+      const spots: [number, number][] = [[-6, -25], [6, -26], [-4, -35], [5, -34]];
+      for (const [sx, sz] of spots) this.spawnEnemy("grunt", sx, sz);
+      this.spawnEnemy("spitter", 0, -22);
+      this.spawnRing(this.v2.set(0, 0, -30), 0xb46aff, 8, 0.6);
+    }
+    if (this.ufoEvt >= 4.4) {
+      this.spawnRing(this.v2.set(u.g.position.x, 0, u.g.position.z), 0xb46aff, 6, 0.5);
+      sfx.portal();
+      this.ufoEvt = -1;
+      this.ufoEvtSpawned = false;
+    }
   }
 
   private removeEnemy(e: Enemy) {
@@ -1037,6 +1212,25 @@ export class Game {
       if (mult >= 2) this.showText(p.x, 3.1, p.z, `COMBO x${mult}`, "#ff9a2a");
       hud.feed(`${pick(KILL_LINES[e.kind])}  +${sc}`, "#8dff3a");
       if (Math.random() < 0.3) this.dropPickup(p.x, p.z);
+      /* killstreak */
+      if (this.streakT > 0) this.streakCount++;
+      else this.streakCount = 1;
+      this.streakT = 2.4;
+      const found = STREAKS.find(([n]) => n === this.streakCount);
+      if (found) {
+        hud.banner(found[1], this.streakCount >= 5 ? "THE HORDE FEELS IT" : "");
+        sfx.fanfare();
+      }
+      if (e.boss) {
+        hud.banner("EL JEFE IS DOWN", "THE PLAZA STANDS. FOR NOW.");
+        sfx.fanfare();
+        this.spawnRing(p, 0xffd23f, 12, 0.8);
+        this.spawnRing(p, 0xc05aff, 8, 0.6);
+        this.burst(this.v1.set(p.x, 2.5, p.z), 0xc05aff, 30, 8);
+        this.shake += 0.8;
+        this.dropPickup(p.x + 1, p.z, "nuke");
+        this.dropPickup(p.x - 1, p.z, "ammo");
+      }
     }
     this.hudSync();
   }
@@ -1063,13 +1257,23 @@ export class Game {
       e.group.position.add(this.v2);
     }
     if (e.hp <= 0) this.killEnemy(e, true);
+    this.hudSync();
   }
 
-  private dropPickup(x: number, z: number) {
+  private dropPickup(x: number, z: number, force?: "health" | "ammo" | "nuke") {
     const wantHealth = this.health < 75;
-    const kind: "health" | "ammo" = Math.random() < (wantHealth ? 0.6 : 0.3) ? "health" : "ammo";
+    const kind: "health" | "ammo" | "nuke" =
+      force ?? (Math.random() < 0.1 ? "nuke" : Math.random() < (wantHealth ? 0.6 : 0.3) ? "health" : "ammo");
     const g = new THREE.Group();
-    if (kind === "health") {
+    if (kind === "nuke") {
+      const box = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.55, 0.55), this.lambert(0x303038));
+      g.add(box);
+      const band = new THREE.Mesh(new THREE.BoxGeometry(0.77, 0.2, 0.57), this.lambert(0xd8b23a));
+      g.add(band);
+      const dot = new THREE.Mesh(new THREE.SphereGeometry(0.09, 6, 5), this.basic.eye);
+      dot.position.set(0, 0.14, 0.28);
+      g.add(dot);
+    } else if (kind === "health") {
       const box = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.45, 0.7), this.lambert(0xe8e8e8));
       g.add(box);
       const c1 = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.46, 0.14), this.lambert(0xd02020));
@@ -1192,13 +1396,16 @@ export class Game {
     r.mat.color.set(color);
   }
 
-  private spawnBeam(pos: THREE.Vector3) {
+  private spawnBeam(pos: THREE.Vector3, color = 0x8dff3a): BeamFX {
     let b = this.beams.find((b) => b.t >= 1);
     if (!b) b = this.beams[0];
     b.t = 0;
     b.mesh.visible = true;
+    b.mesh.scale.set(1, 1, 1);
+    b.mat.color.set(color);
     b.mesh.position.set(pos.x, 3.5, pos.z);
     b.mesh.rotation.y = rand(0, 3);
+    return b;
   }
 
   private updateFX(dt: number) {
@@ -1245,7 +1452,9 @@ export class Game {
         w.baseZ = rand(-80, 80);
       }
     }
-    for (const u of this.ufos) {
+    for (let ui = 0; ui < this.ufos.length; ui++) {
+      const u = this.ufos[ui];
+      if (ui === 0 && this.ufoEvt >= 0) continue;
       u.a += u.sp * dt;
       u.g.position.set(Math.cos(u.a) * u.r, u.h + Math.sin(t * 0.8 + u.r) * 1.6, Math.sin(u.a) * u.r);
       u.g.rotation.y = -u.a + Math.PI / 2;
@@ -1263,6 +1472,10 @@ export class Game {
   }
 
   private updateCombo(dt: number) {
+    if (this.streakT > 0) {
+      this.streakT -= dt;
+      if (this.streakT <= 0) this.streakCount = 0;
+    }
     if (this.comboCount <= 0) return;
     this.comboT -= dt;
     if (this.comboT <= 0) {
@@ -1292,59 +1505,76 @@ export class Game {
     this.flashT = 0.045;
     this.gunLight.intensity = this.weaponIdx === 1 ? 60 : 34;
     this.shake += w.kick;
-    /* recoil springs: sustained SMG fire climbs, magnum punches + rolls */
+    /* recoil springs: sustained SMG fire climbs, heavies punch + roll */
     this.kickPV += w.pitchKick * rand(0.85, 1.15);
-    if (this.weaponIdx === 1) {
+    if (w.rollKick >= 2) {
       this.rollSign *= -1;
       this.kickRV += w.rollKick * this.rollSign * rand(0.8, 1.2);
-      this.shake += 0.12;
+      this.shake += w.kind === "rocket" ? 0.2 : 0.12;
     } else {
       this.kickRV += w.rollKick * rand(-1, 1);
     }
     w.sound();
-    this.casing();
+    if (w.kind !== "rocket") this.casing();
     document.documentElement.style.setProperty("--spr", `${Math.round(6 + this.recoil * 14)}px`);
-    this.muzzleSmoke(this.weaponIdx === 1 ? 2 : 1);
+    this.muzzleSmoke(this.weaponIdx === 0 ? 1 : 2);
+    this.gunLight.intensity = w.kind === "rocket" ? 90 : this.gunLight.intensity;
 
-    /* hitscan */
-    const spread = w.spread * (1 + this.recoil * 1.4);
+    /* muzzle world position */
+    const gun = this.guns[this.weaponIdx];
+    const mz = [[0, 0.01, -0.62], [0, 0.03, -0.52], [0, 0.04, -0.58], [0, 0.02, -0.52]][this.weaponIdx];
+    this.muzzleV.set(mz[0], mz[1], mz[2]).applyMatrix4(gun.matrixWorld);
+
+    if (w.kind === "rocket") {
+      this.launchRocket();
+      this.hudSync();
+      return;
+    }
+
+    /* hitscan — per pellet */
+    const baseSpread = w.spread * (1 + this.recoil * 1.4);
     this.camera.getWorldDirection(this.v1);
     const right = this.v2.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     const up = this.v3.set(0, 1, 0);
-    this.v1.addScaledVector(right, (Math.random() - 0.5) * 2 * spread).addScaledVector(up, (Math.random() - 0.5) * 2 * spread).normalize();
-    this.raycaster.set(this.camera.position, this.v1);
-    this.raycaster.far = 170;
-
-    const gun = this.guns[this.weaponIdx];
-    const muzzleLocal = this.weaponIdx === 1 ? this.v2.set(0, 0.03, -0.52) : this.v2.set(0, 0.01, -0.62);
-    /* v2 reused — compute muzzle before raycast results need v2... do it now */
-    this.muzzleV.copy(muzzleLocal).applyMatrix4(gun.matrixWorld);
-
-    const targets: THREE.Object3D[] = [...this.hitList, ...this.envMeshes];
-    const hits = this.raycaster.intersectObjects(targets, false);
-    let end: THREE.Vector3;
-    if (hits.length > 0) {
-      const h = hits[0];
-      end = h.point.clone();
-      const e = h.object.userData.e as Enemy | undefined;
-      if (e) {
-        const headY = e.kind === "brute" ? 1.95 : 1.5;
-        const isHead = h.point.y > e.group.position.y + headY;
-        this.damageEnemy(e, isHead ? w.dmg * 1.8 : w.dmg, h.point, isHead);
-      } else {
-        this.burst(h.point, 0xffb050, 5, 3);
-        if (h.face) {
-          const n = h.face.normal.clone().transformDirection(h.object.matrixWorld);
-          this.spawnDecal(h.point, n, 0x17100c, rand(0.24, 0.5), rand(5, 8));
+    const baseDir = this.v1.clone();
+    const dir = new THREE.Vector3();
+    for (let pi = 0; pi < w.pellets; pi++) {
+      const spread = baseSpread * (w.pellets > 1 ? rand(0.5, 1.25) : 1);
+      dir
+        .copy(baseDir)
+        .addScaledVector(right, (Math.random() - 0.5) * 2 * spread)
+        .addScaledVector(up, (Math.random() - 0.5) * 2 * spread)
+        .normalize();
+      this.raycaster.set(this.camera.position, dir);
+      this.raycaster.far = 170;
+      const targets: THREE.Object3D[] = [...this.hitList, ...this.envMeshes];
+      const hits = this.raycaster.intersectObjects(targets, false);
+      let end: THREE.Vector3;
+      if (hits.length > 0) {
+        const h = hits[0];
+        end = h.point.clone();
+        const e = h.object.userData.e as Enemy | undefined;
+        if (e) {
+          const headY = e.kind === "brute" || e.kind === "boss" ? 1.95 : 1.5;
+          const isHead = h.point.y > e.group.position.y + headY * e.groupBase;
+          this.damageEnemy(e, isHead ? w.dmg * 1.8 : w.dmg, h.point, isHead);
+        } else {
+          this.burst(h.point, 0xffb050, 4, 3);
+          if (h.face) {
+            const n = h.face.normal.clone().transformDirection(h.object.matrixWorld);
+            this.spawnDecal(h.point, n, 0x17100c, rand(0.24, 0.5), rand(5, 8));
+          }
         }
+      } else {
+        end = this.camera.position.clone().addScaledVector(dir, 120);
       }
-    } else {
-      end = this.camera.position.clone().addScaledVector(this.v1, 120);
-    }
-    if (this.weaponIdx === 1) {
-      this.fireTracer(this.muzzleV.clone(), end, 2.4, 0xffb050, 0.1);
-    } else {
-      this.fireTracer(this.muzzleV.clone(), end, 1, 0xffe2a8, 0.07);
+      if (this.weaponIdx === 1) {
+        this.fireTracer(this.muzzleV.clone(), end, 2.4, 0xffb050, 0.1);
+      } else if (this.weaponIdx === 2) {
+        this.fireTracer(this.muzzleV.clone(), end, 1.5, 0xffc060, 0.06);
+      } else {
+        this.fireTracer(this.muzzleV.clone(), end, 1, 0xffe2a8, 0.07);
+      }
     }
     this.hudSync();
   }
@@ -1371,12 +1601,11 @@ export class Game {
   }
 
   private switchWeapon(i: number) {
-    if (i === this.weaponIdx || i < 0 || i > 1) return;
+    if (i === this.weaponIdx || i < 0 || i > 3) return;
     this.weaponIdx = i;
     this.reloading = false;
     this.switchT = 0.22;
-    this.guns[0].visible = i === 0;
-    this.guns[1].visible = i === 1;
+    for (let g = 0; g < this.guns.length; g++) this.guns[g].visible = g === i;
     sfx.switch();
     this.hudSync();
   }
@@ -1420,11 +1649,13 @@ export class Game {
       const j = Math.floor(Math.random() * (i + 1));
       [q[i], q[j]] = [q[j], q[i]];
     }
+    if (n % 5 === 0) q.push("boss");
     this.queue = q;
     this.spawnT = 0.6;
     this.waveBreak = -1;
-    hud.banner(`WAVE ${n}`, pick(WAVE_LINES));
+    hud.banner(`WAVE ${n}`, n % 5 === 0 ? "BOSS WAVE. BRING THE BOOMSTICK." : pick(WAVE_LINES));
     sfx.wave();
+    if (n % 3 === 0 && this.ufoEvt < 0) this.ufoEvt = 0;
     this.hudSync();
   }
 
@@ -1434,7 +1665,8 @@ export class Game {
       const alive = this.enemies.filter((e) => !e.dying).length;
       if (this.spawnT <= 0 && alive < Math.min(10 + this.wave, 16)) {
         const kind = this.queue.pop()!;
-        this.spawnEnemy(kind);
+        if (kind === "boss") this.spawnBoss();
+        else this.spawnEnemy(kind);
         this.spawnT = Math.max(0.35, 1.15 - this.wave * 0.06);
         this.hudSync();
       }
@@ -1445,6 +1677,8 @@ export class Game {
       this.health = Math.min(100, this.health + 18);
       this.reserves[0] = Math.min(240, this.reserves[0] + 64);
       this.reserves[1] = Math.min(48, this.reserves[1] + 12);
+      this.reserves[2] = Math.min(48, this.reserves[2] + 10);
+      this.reserves[3] = Math.min(12, this.reserves[3] + 3);
       hud.banner("WAVE CLEARED", `SECTOR BONUS +${bonus}`);
       sfx.clear();
       this.hudSync();
@@ -1593,9 +1827,9 @@ export class Game {
     for (const e of [...this.enemies]) {
       if (e.dying) {
         e.dieT += dt;
-        const t = e.dieT / 0.28;
+        const t = e.dieT / (e.boss ? 0.6 : 0.28);
         e.group.rotation.y += dt * 11;
-        const s = Math.max(0.001, 1 - t);
+        const s = Math.max(0.001, 1 - t) * e.groupBase;
         e.group.scale.set(s, s, s);
         if (t >= 1) this.removeEnemy(e);
         continue;
@@ -1633,28 +1867,105 @@ export class Game {
 
       let moving = true;
       if (combat) {
-        if (e.kind === "grunt" || e.kind === "brute") {
-          if (dist > e.radius + 0.5) {
-            gp.x += (dx / dist) * e.speed * dt;
-            gp.z += (dz / dist) * e.speed * dt;
+        if (e.kind === "grunt") {
+          if (e.leapT > 0) {
+            /* mid-leap */
+            e.leapT -= dt;
+            gp.x += e.leapVX * dt;
+            gp.z += e.leapVZ * dt;
+            if (e.leapT <= 0) {
+              e.leapT = 0;
+              this.burst(this.v1.set(gp.x, 0.2, gp.z), 0xc4a06a, 6, 2.5);
+              sfx.land();
+              if (dist < 2.2) this.damagePlayer(e.dmg, "LEAPING GRUNT");
+            }
           } else {
-            moving = false;
-            e.attackCd -= dt;
-            if (e.attackCd <= 0) {
-              e.attackCd = 1.15;
-              e.lungeT = 0.3;
+            e.leapCd -= dt;
+            if (dist > 6 && dist < 12.5 && e.leapCd <= 0) {
+              e.leapT = 0.5;
+              e.leapCd = rand(3.5, 5.5);
+              const sp = Math.min(dist / 0.5, 13);
+              e.leapVX = (dx / dist) * sp;
+              e.leapVZ = (dz / dist) * sp;
+              sfx.jump();
+            } else if (dist > e.radius + 0.5) {
+              gp.x += (dx / dist) * e.speed * dt;
+              gp.z += (dz / dist) * e.speed * dt;
+            } else {
+              moving = false;
+              e.attackCd -= dt;
+              if (e.attackCd <= 0) {
+                e.attackCd = 1.15;
+                e.lungeT = 0.3;
+              }
+            }
+            if (e.lungeT > 0) {
+              const prev = e.lungeT;
+              e.lungeT -= dt;
+              const phase = (t: number) => Math.sin(((0.3 - t) / 0.3) * Math.PI);
+              e.parts.body.position.z = phase(Math.max(0, e.lungeT)) * 0.45;
+              if (prev > 0.15 && e.lungeT <= 0.15 && dist < e.radius + 1.6) {
+                this.damagePlayer(e.dmg, "ALIEN GRUNT");
+              }
+            } else {
+              e.parts.body.position.z = 0;
             }
           }
-          if (e.lungeT > 0) {
-            const prev = e.lungeT;
-            e.lungeT -= dt;
-            const phase = (t: number) => Math.sin(((0.3 - t) / 0.3) * Math.PI);
-            e.parts.body.position.z = phase(Math.max(0, e.lungeT)) * 0.45;
-            if (prev > 0.15 && e.lungeT <= 0.15 && dist < e.radius + 1.6) {
-              this.damagePlayer(e.dmg, e.kind === "brute" ? "BRUTE" : "ALIEN GRUNT");
+        } else if (e.kind === "brute" || e.kind === "boss") {
+          if (e.chargeT > 0) {
+            e.chargeT -= dt;
+            gp.x += e.chargeDX * e.speed * 3.4 * dt;
+            gp.z += e.chargeDZ * e.speed * 3.4 * dt;
+            if (!e.chargeHit && dist < e.radius + 1.3) {
+              e.chargeHit = true;
+              this.damagePlayer(Math.round(e.dmg * 1.5), e.boss ? "EL JEFE" : "BRUTE CHARGE");
+              this.shake += 0.45;
             }
+            e.parts.body.rotation.z = Math.sin(e.chargeT * 42) * 0.09;
           } else {
-            e.parts.body.position.z = 0;
+            e.parts.body.rotation.z = 0;
+            e.chargeCd -= dt;
+            if (dist > 9 && dist < 27 && e.chargeCd <= 0) {
+              e.chargeT = 0.85;
+              e.chargeCd = rand(5, 7);
+              e.chargeDX = dx / dist;
+              e.chargeDZ = dz / dist;
+              e.chargeHit = false;
+              sfx.charge();
+              this.spawnRing(gp, 0xff5a5a, 3.2, 0.35);
+            } else if (dist > e.radius + 0.5) {
+              gp.x += (dx / dist) * e.speed * dt;
+              gp.z += (dz / dist) * e.speed * dt;
+            } else {
+              moving = false;
+              e.attackCd -= dt;
+              if (e.attackCd <= 0) {
+                e.attackCd = 1.15;
+                e.lungeT = 0.3;
+              }
+            }
+            if (e.lungeT > 0) {
+              const prev = e.lungeT;
+              e.lungeT -= dt;
+              const phase = (t: number) => Math.sin(((0.3 - t) / 0.3) * Math.PI);
+              e.parts.body.position.z = phase(Math.max(0, e.lungeT)) * 0.45;
+              if (prev > 0.15 && e.lungeT <= 0.15 && dist < e.radius + 1.6) {
+                this.damagePlayer(e.dmg, e.boss ? "EL JEFE" : "BRUTE");
+              }
+            } else {
+              e.parts.body.position.z = 0;
+            }
+          }
+          if (e.boss) {
+            e.spitCd -= dt;
+            if (e.spitCd <= 0 && dist > 8 && dist < 46) {
+              e.spitCd = rand(2.6, 3.4);
+              for (const off of [-0.35, 0, 0.35]) this.fireProjectile(gp, Math.round(e.dmg * 0.6), off);
+            }
+          }
+          if (e.parts.sac) {
+            const pulse = 1 + Math.sin(this.clock.elapsedTime * 5 + gp.x) * 0.18;
+            e.parts.sac.scale.set(pulse, pulse, pulse);
           }
         } else {
           /* spitter */
@@ -1681,7 +1992,8 @@ export class Game {
 
       if (dist > 0.01) e.group.rotation.y = Math.atan2(dx, dz);
       e.bobT += dt * (moving ? e.speed * 2.2 : 3);
-      const baseY = e.kind === "brute" ? 0 : Math.abs(Math.sin(e.bobT)) * 0.12;
+      let baseY = e.kind === "brute" || e.kind === "boss" ? 0 : Math.abs(Math.sin(e.bobT)) * 0.12;
+      if (e.leapT > 0) baseY = Math.sin(((0.5 - e.leapT) / 0.5) * Math.PI) * 1.5;
       e.group.position.y = baseY;
       if (e.parts.armL) e.parts.armL.rotation.x = Math.sin(e.bobT) * 0.7;
       if (e.parts.armR) e.parts.armR.rotation.x = -Math.sin(e.bobT) * 0.7;
@@ -1694,7 +2006,7 @@ export class Game {
     }
   }
 
-  private fireProjectile(from: THREE.Vector3, dmg: number) {
+  private fireProjectile(from: THREE.Vector3, dmg: number, aimOffset = 0) {
     const p = this.projectiles.find((p) => !p.active);
     if (!p) return;
     p.active = true;
@@ -1704,6 +2016,13 @@ export class Game {
     this.v1.set(this.pos.x - from.x, 0, this.pos.z - from.z);
     const d = this.v1.length() || 1;
     this.v1.normalize();
+    if (aimOffset !== 0) {
+      const cos = Math.cos(aimOffset);
+      const sin = Math.sin(aimOffset);
+      const nx = this.v1.x * cos - this.v1.z * sin;
+      this.v1.z = this.v1.x * sin + this.v1.z * cos;
+      this.v1.x = nx;
+    }
     p.vel.set(this.v1.x * 15, 3.2 + d * 0.06, this.v1.z * 15);
     p.mesh.userData.dmg = dmg;
     sfx.spit();
@@ -1739,6 +2058,92 @@ export class Game {
     }
   }
 
+  private launchRocket() {
+    const r = this.rockets.find((r) => !r.active);
+    if (!r) return;
+    r.active = true;
+    r.life = 4;
+    r.g.visible = true;
+    this.camera.getWorldDirection(this.v1);
+    this.v1.x += rand(-0.006, 0.006);
+    this.v1.y += rand(-0.006, 0.006);
+    this.v1.z += rand(-0.006, 0.006);
+    this.v1.normalize();
+    r.g.position.copy(this.muzzleV);
+    r.vel.copy(this.v1).multiplyScalar(30);
+    r.g.quaternion.setFromUnitVectors(this.v2.set(0, 1, 0), this.v1);
+  }
+
+  private explodeRocket(at: THREE.Vector3) {
+    sfx.boom();
+    this.shake += 1.0;
+    this.spawnRing(at, 0xff9a2a, 8, 0.5);
+    this.spawnRing(at, 0xfff2c8, 4.5, 0.3);
+    this.burst(at, 0xff9a2a, 22, 8);
+    this.burst(at, 0x666666, 12, 4.5);
+    this.spawnDecal(this.v3.set(at.x, 0.02, at.z), this.v2.set(0, 1, 0), 0x100c08, 2.6, 14);
+    for (const e of [...this.enemies]) {
+      if (e.dying) continue;
+      const ep = e.group.position;
+      const d = Math.hypot(ep.x - at.x, ep.z - at.z);
+      if (d < 6.2) {
+        const dmg = Math.round(WEAPONS[3].dmg * (1 - (d / 6.2) * 0.55));
+        this.damageEnemy(e, dmg, this.v1.set(ep.x, 1.2, ep.z), false);
+      }
+    }
+  }
+
+  private updateRockets(dt: number) {
+    for (const r of this.rockets) {
+      if (!r.active) continue;
+      r.life -= dt;
+      r.vel.y -= 4.5 * dt;
+      const prev = this.v2.copy(r.g.position);
+      r.g.position.addScaledVector(r.vel, dt);
+      /* smoke trail */
+      const p = this.particles[this.pIndex];
+      this.pIndex = (this.pIndex + 1) % this.particles.length;
+      p.active = true;
+      p.pos.copy(r.g.position);
+      p.vel.set(rand(-0.4, 0.4), rand(0.2, 0.7), rand(-0.4, 0.4));
+      p.maxLife = p.life = rand(0.3, 0.55);
+      p.size = rand(0.7, 1.2);
+      p.color.set(0x8a8a8a);
+      p.grav = -1.5;
+
+      const rp = r.g.position;
+      let boom: THREE.Vector3 | null = null;
+      if (rp.y < 0.18) {
+        boom = rp.clone().setY(0.25);
+      } else {
+        for (const e of this.enemies) {
+          if (e.dying) continue;
+          const ep = e.group.position;
+          const rr = e.radius * e.groupBase + 0.45;
+          if (Math.abs(rp.x - ep.x) < rr && Math.abs(rp.z - ep.z) < rr && rp.y < 3.4 * e.groupBase) {
+            boom = rp.clone();
+            break;
+          }
+        }
+        if (!boom) {
+          const step = this.v3.copy(rp).sub(prev);
+          const len = step.length();
+          if (len > 0.001) {
+            this.raycaster.set(prev, step.normalize());
+            this.raycaster.far = len + 0.6;
+            const hits = this.raycaster.intersectObjects(this.envMeshes, false);
+            if (hits.length > 0) boom = hits[0].point.clone();
+          }
+        }
+      }
+      if (boom || r.life <= 0) {
+        r.active = false;
+        r.g.visible = false;
+        this.explodeRocket(boom || rp);
+      }
+    }
+  }
+
   private updatePickups(dt: number) {
     for (const p of [...this.pickups]) {
       if (!p.active) continue;
@@ -1758,9 +2163,13 @@ export class Game {
           sfx.heal();
           hud.feed("MEDKIT  +25 HP", "#6cff8a");
           this.showText(this.pos.x, 2.4, this.pos.z, "+25 HP", "#6cff8a");
+        } else if (p.kind === "nuke") {
+          this.nukeBlast();
         } else {
           this.reserves[0] = Math.min(240, this.reserves[0] + 48);
           this.reserves[1] = Math.min(48, this.reserves[1] + 9);
+          this.reserves[2] = Math.min(48, this.reserves[2] + 8);
+          this.reserves[3] = Math.min(12, this.reserves[3] + 2);
           sfx.pickup();
           hud.feed("AMMO CACHE RESTOCKED", "#ffd23f");
           this.showText(this.pos.x, 2.4, this.pos.z, "AMMO", "#ffd23f");
@@ -1897,8 +2306,24 @@ export class Game {
 
   /* ------------------------------------------------ flow */
 
+  private nukeBlast() {
+    hud.set({ nukeId: hud.get().nukeId + 1 });
+    sfx.nuke();
+    this.shake += 1.4;
+    this.spawnRing(this.pos, 0xfff2c8, 22, 0.9);
+    this.spawnRing(this.pos, 0xff9a2a, 14, 0.6);
+    this.burst(this.v1.set(this.pos.x, 2, this.pos.z), 0xfff2c8, 30, 9);
+    const b = this.spawnBeam(this.v2.set(this.pos.x, 0, this.pos.z), 0xffd23f);
+    b.mesh.scale.set(3, 1.4, 3);
+    for (const e of [...this.enemies]) if (!e.dying) this.killEnemy(e, true);
+    hud.feed("TACTICAL NUKE DETONATED", "#ffd23f");
+  }
+
   private hudSync() {
+    const boss = this.enemies.find((e) => e.boss && !e.dying);
     hud.set({
+      bossHp: boss ? Math.max(0, Math.min(1, boss.hp / (ENEMY_DEFS.boss.hp * (1 + this.wave * 0.04)))) : 0,
+      bossName: boss ? "EL JEFE" : "",
       health: Math.round(this.health),
       mag: this.mags[this.weaponIdx],
       reserve: this.reserves[this.weaponIdx],
@@ -1955,8 +2380,8 @@ export class Game {
     this.pitch = 0;
     this.health = 100;
     this.weaponIdx = 0;
-    this.mags = [32, 6];
-    this.reserves = [160, 36];
+    this.mags = [32, 6, 8, 1];
+    this.reserves = [160, 36, 32, 9];
     this.shootCd = 0;
     this.reloading = false;
     this.recoil = 0;
@@ -1964,8 +2389,17 @@ export class Game {
     this.wave = 0;
     this.queue = [];
     this.waveBreak = -1;
-    this.guns[0].visible = true;
-    this.guns[1].visible = false;
+    this.comboCount = 0;
+    this.comboT = 0;
+    this.streakCount = 0;
+    this.streakT = 0;
+    this.ufoEvt = -1;
+    this.ufoEvtSpawned = false;
+    for (const r of this.rockets) {
+      r.active = false;
+      r.g.visible = false;
+    }
+    for (let g = 0; g < this.guns.length; g++) this.guns[g].visible = g === 0;
     this.hudSync();
     hud.set({ score: 0, kills: 0, feed: [], combo: 0 });
   }
@@ -2023,6 +2457,8 @@ export class Game {
     if (e.code === "KeyR") this.tryReload();
     if (e.code === "Digit1") this.switchWeapon(0);
     if (e.code === "Digit2") this.switchWeapon(1);
+    if (e.code === "Digit3") this.switchWeapon(2);
+    if (e.code === "Digit4") this.switchWeapon(3);
   };
 
   private onKeyUp = (e: KeyboardEvent) => {
@@ -2051,7 +2487,7 @@ export class Game {
 
   private onWheel = (e: WheelEvent) => {
     if (this.state !== "playing") return;
-    this.switchWeapon((this.weaponIdx + (e.deltaY > 0 ? 1 : -1) + 2) % 2);
+    this.switchWeapon((this.weaponIdx + (e.deltaY > 0 ? 1 : -1) + 4) % 4);
   };
 
   private onLockChange = () => {

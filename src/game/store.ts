@@ -28,6 +28,9 @@ export interface Hud {
   feed: FeedItem[];
   hitId: number;
   dmgId: number;
+  nukeId: number;
+  bossHp: number;
+  bossName: string;
 }
 
 const loadBest = (): number => {
@@ -58,6 +61,9 @@ let s: Hud = {
   feed: [],
   hitId: 0,
   dmgId: 0,
+  nukeId: 0,
+  bossHp: 0,
+  bossName: "",
 };
 
 const listeners = new Set<() => void>();

@@ -248,6 +248,19 @@
   }
 }
 
+.nuke-flash {
+  background: radial-gradient(ellipse at center, #fff8e8, #ffd23f 45%, rgba(255,120,20,0.85));
+  animation: nukeflash 0.85s ease-out forwards;
+}
+@keyframes nukeflash {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 .combo-pop {
   animation: combopop 0.28s cubic-bezier(0.2, 1.4, 0.4, 1) both;
 }
