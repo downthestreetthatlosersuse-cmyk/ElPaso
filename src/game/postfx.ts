@@ -171,6 +171,7 @@ export function createPostFX(
 
   /* god rays feed off a quarter-res render of the scene */
   const lowRT = new THREE.WebGLRenderTarget(Math.floor(width / 4), Math.floor(height / 4));
+  const black = new THREE.MeshBasicMaterial({ color: 0x000000, fog: false });
   const godray = new ShaderPass(GodRayShader);
   godray.uniforms.tOcc.value = lowRT.texture;
   composer.addPass(godray);
@@ -202,12 +203,22 @@ export function createPostFX(
     aber = Math.max(0, aber - dt * 5);
     hit = Math.max(0, hit - dt * 6);
 
-    /* low-res occlusion render for the light streaks —
-       ONLY sky + sun (layer 1) feed the god rays, not stars/particles/neon */
+    /* low-res occlusion render for the light streaks, in two passes:
+       1) the whole opaque world as flat black occluders (real depth)
+       2) sky + sun (layer 1) depth-tested against them —
+       so rays only exist where the sun is genuinely visible, and
+       stars / dust / particles / flames never bleed into the smear */
     const prevMask = cam.layers.mask;
-    cam.layers.mask = 2;
+    const prevAuto = renderer.autoClear;
     renderer.setRenderTarget(lowRT);
+    scene.overrideMaterial = black;
+    cam.layers.mask = 1; /* layer 0 only */
     renderer.render(scene, cam);
+    scene.overrideMaterial = null;
+    cam.layers.mask = 2; /* layer 1 only — sky + sun */
+    renderer.autoClear = false;
+    renderer.render(scene, cam);
+    renderer.autoClear = prevAuto;
     renderer.setRenderTarget(null);
     cam.layers.mask = prevMask;
 

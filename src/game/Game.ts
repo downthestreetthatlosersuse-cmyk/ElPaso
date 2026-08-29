@@ -326,6 +326,8 @@ export class Game {
 
     this.camera = new THREE.PerspectiveCamera(75, W / H, 0.05, 600);
     this.camera.rotation.order = "YXZ";
+    this.camera.layers.enable(1); /* god-ray sources (sky + sun) */
+    this.camera.layers.enable(2); /* unlit additive FX */
     this.scene.add(this.camera);
     this.scene.fog = new THREE.Fog(0xe2703a, 70, 330);
 
@@ -576,7 +578,7 @@ export class Game {
       new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false })
     );
     sky.userData.noShadow = true;
-    sky.layers.enable(1); /* god-ray source layer */
+    sky.layers.set(1); /* god-ray source layer only */
     this.scene.add(sky);
 
     /* sun */
@@ -595,7 +597,7 @@ export class Game {
     );
     sun.scale.set(110, 110, 1);
     sun.position.set(-160, 62, -250);
-    sun.layers.enable(1); /* god-ray source layer */
+    sun.layers.set(1); /* god-ray source layer only */
     this.scene.add(sun);
 
     /* stars */
@@ -608,9 +610,9 @@ export class Game {
     }
     const sg = new THREE.BufferGeometry();
     sg.setAttribute("position", new THREE.Float32BufferAttribute(starPos, 3));
-    this.scene.add(
-      new THREE.Points(sg, new THREE.PointsMaterial({ color: 0xfff2d8, size: 1.7, sizeAttenuation: false, fog: false, transparent: true, opacity: 0.75 }))
-    );
+    const stars = new THREE.Points(sg, new THREE.PointsMaterial({ color: 0xfff2d8, size: 1.7, sizeAttenuation: false, fog: false, transparent: true, opacity: 0.75 }));
+    stars.layers.set(2);
+    this.scene.add(stars);
 
     /* mountains */
     for (let i = 0; i < 14; i++) {
@@ -620,7 +622,6 @@ export class Game {
       const m = new THREE.Mesh(new THREE.ConeGeometry(rand(22, 42), h, 5), this.mat.mountain);
       m.position.set(Math.cos(a) * r, h / 2 - 1, Math.sin(a) * r);
       m.rotation.y = rand(0, 3);
-      m.layers.enable(1); /* occlude the god rays like real silhouettes */
       this.scene.add(m);
     }
   }
@@ -896,6 +897,7 @@ export class Game {
         const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.7), fm);
         flag.position.copy(pts[i]).add(this.v3.set(0, -0.38, 0));
         flag.rotation.y = rand(-0.5, 0.5);
+        flag.layers.set(2);
         flag.userData.i = this.picadoFlags.length;
         this.picadoFlags.push(flag);
         this.scene.add(flag);
@@ -915,6 +917,7 @@ export class Game {
     basin.position.y = 0.4;
     f.add(basin);
     const water = new THREE.Mesh(new THREE.CylinderGeometry(2.9, 2.9, 0.12, 14), this.mat.water);
+    water.layers.set(2);
     water.position.y = 0.78;
     f.add(water);
     const col = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.5, 1.8, 8), this.mat.concrete);
@@ -1071,6 +1074,7 @@ export class Game {
         new THREE.ConeGeometry(0.4, 0.95, 7),
         new THREE.MeshBasicMaterial({ color: 0xff9a30, transparent: true, opacity: 0.92, blending: THREE.AdditiveBlending, depthWrite: false })
       );
+      flame.layers.set(2);
       flame.position.y = 1.5;
       b.add(flame);
       this.flames.push(flame);
@@ -1497,6 +1501,7 @@ export class Game {
     /* particles */
     const pMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
     this.pMesh = new THREE.InstancedMesh(this.geo.particle, pMat, 320);
+    this.pMesh.layers.set(2);
     this.pMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.dummy.scale.set(0, 0, 0);
     this.dummy.updateMatrix();
@@ -1523,6 +1528,7 @@ export class Game {
     for (let i = 0; i < 20; i++) {
       const m = new THREE.Mesh(pGeo, pMatB);
       m.visible = false;
+      m.layers.set(2);
       this.scene.add(m);
       this.projectiles.push({ mesh: m, vel: new THREE.Vector3(), life: 0, active: false });
     }
@@ -1532,6 +1538,7 @@ export class Game {
       const mat = new THREE.MeshBasicMaterial({ color: 0xffe2a8, transparent: true, opacity: 0 });
       const m = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.035, 1), mat);
       m.visible = false;
+      m.layers.set(2);
       this.scene.add(m);
       this.tracers.push({ mesh: m, mat, life: 0 });
     }
@@ -1557,6 +1564,7 @@ export class Game {
       const mesh = new THREE.Mesh(decalGeo, mat);
       mesh.visible = false;
       mesh.renderOrder = 2;
+      mesh.layers.set(2);
       this.scene.add(mesh);
       this.decals.push({ mesh, mat, life: 0, maxLife: 1, active: false });
     }
@@ -1569,6 +1577,7 @@ export class Game {
       mesh.rotation.x = -Math.PI / 2;
       mesh.visible = false;
       mesh.renderOrder = 3;
+      mesh.layers.set(2);
       this.scene.add(mesh);
       this.rings.push({ mesh, mat, t: 1, dur: 1, max: 1 });
     }
@@ -1580,6 +1589,7 @@ export class Game {
       const mesh = new THREE.Mesh(beamGeo, mat);
       mesh.visible = false;
       mesh.renderOrder = 4;
+      mesh.layers.set(2);
       this.scene.add(mesh);
       this.beams.push({ mesh, mat, t: 1 });
     }
@@ -1608,6 +1618,7 @@ export class Game {
         new THREE.SphereGeometry(1.7, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2),
         new THREE.MeshBasicMaterial({ color: 0x6a4aff, transparent: true, opacity: 0.55 })
       );
+      dome.layers.set(2);
       dome.position.y = 0.55;
       g.add(dome);
       const lights: THREE.Mesh[] = [];
@@ -1638,6 +1649,7 @@ export class Game {
       dustGeo,
       new THREE.PointsMaterial({ color: 0xffc890, size: 0.11, transparent: true, opacity: 0.4, depthWrite: false, blending: THREE.AdditiveBlending })
     );
+    this.dust.layers.set(2);
     this.scene.add(this.dust);
 
     /* rockets */
@@ -2343,6 +2355,7 @@ export class Game {
       const mesh = new THREE.Mesh(domeGeo, mat);
       mesh.visible = false;
       mesh.renderOrder = 5;
+      mesh.layers.set(2);
       this.scene.add(mesh);
       this.fireballs.push({ mesh, mat, life: 0, dur: 1, max: 1, rise: 2, spin: 0, peak: 1, baseY: 0 });
     }
@@ -2360,6 +2373,7 @@ export class Game {
       const mesh = new THREE.Mesh(colGeo, mat);
       mesh.visible = false;
       mesh.renderOrder = 4;
+      mesh.layers.set(2);
       this.scene.add(mesh);
       this.pillars.push({ mesh, mat, life: 0, dur: 1, h: 10, baseX: 1 });
     }
@@ -2376,6 +2390,7 @@ export class Game {
       mesh.rotation.x = -Math.PI / 2;
       mesh.visible = false;
       mesh.renderOrder = 4;
+      mesh.layers.set(2);
       this.scene.add(mesh);
       this.fireDisks.push({ mesh, mat, life: 0, dur: 1, max: 6 });
     }
