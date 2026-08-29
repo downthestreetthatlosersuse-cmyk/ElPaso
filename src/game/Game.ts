@@ -630,7 +630,7 @@ export class Game {
     /* plaza */
     const plaza = new THREE.Mesh(new THREE.CircleGeometry(11, 18), new THREE.MeshLambertMaterial({ map: this.tex.plaza }));
     plaza.rotation.x = -Math.PI / 2;
-    plaza.position.set(0, 0.018, -30);
+    plaza.position.set(14, 0.018, -18);
     this.scene.add(plaza);
   }
 
