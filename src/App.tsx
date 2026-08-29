@@ -126,6 +126,30 @@ function InGameHud({ h }: { h: Hud }) {
         </div>
       </div>
 
+      {/* boss bar */}
+      {h.bossHp > 0 && (
+        <div className="absolute inset-x-0 top-14 flex justify-center pointer-events-none">
+          <div className="hud-panel px-4 py-2 w-[min(560px,80vw)]" style={{ borderColor: "#c05aff" }}>
+            <div className="flex items-baseline justify-between">
+              <span className="font-display text-xl" style={{ color: "#e08aff", textShadow: "0 2px 0 #3a1050" }}>
+                {h.bossName}
+              </span>
+              <span className="font-crt text-lg text-[#c8b8e8]">{Math.round(h.bossHp * 100)}%</span>
+            </div>
+            <div className="h-3.5 border-2 border-[#c05aff] bg-black mt-1">
+              <div
+                className="h-full transition-all duration-150"
+                style={{
+                  width: `${h.bossHp * 100}%`,
+                  background: "linear-gradient(90deg, #7b2fbe, #c05aff)",
+                  boxShadow: "0 0 12px rgba(192,90,255,0.8)",
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* banner */}
       {h.bannerId > 0 && (
         <div className="absolute inset-x-0 top-[22%] flex justify-center pointer-events-none">
@@ -154,17 +178,28 @@ function InGameHud({ h }: { h: Hud }) {
         </div>
 
         <div className="hidden md:block font-crt text-lg text-[rgba(242,170,90,0.55)] leading-snug text-center">
-          HOLD THE PLAZA · R RELOAD · SHIFT SPRINT · SPACE JUMP
+          HOLD THE PLAZA · R RELOAD · 1-4 / WHEEL WEAPONS · SHIFT SPRINT
           <br />
           <span className="text-[rgba(141,255,58,0.6)]">EL PASO COUNTY · SECTOR 7 · 480i NTSC</span>
         </div>
 
         <div className="hud-panel px-4 py-2 text-right">
-          <div className="flex items-center justify-end gap-2">
-            <span className={`font-crt text-lg px-1.5 border ${h.weaponSlot === 0 ? "border-[#8dff3a] text-[#8dff3a]" : "border-[#5a3a78] text-[#8a78a8]"}`}>1</span>
-            <span className={`font-crt text-lg px-1.5 border ${h.weaponSlot === 1 ? "border-[#8dff3a] text-[#8dff3a]" : "border-[#5a3a78] text-[#8a78a8]"}`}>2</span>
-            <span className="font-display text-sm text-[#8dff3a]">{h.weapon}</span>
+          <div className="flex items-center justify-end gap-1.5">
+            {["SMG", "MAG", "SHT", "RKTL"].map((label, i) => (
+              <span
+                key={label}
+                className={`font-crt text-base px-1.5 border ${
+                  h.weaponSlot === i
+                    ? "border-[#8dff3a] text-[#8dff3a] bg-[rgba(141,255,58,0.12)]"
+                    : "border-[#5a3a78] text-[#8a78a8]"
+                }`}
+                title={`Slot ${i + 1}: ${label}`}
+              >
+                {i + 1} {label}
+              </span>
+            ))}
           </div>
+          <div className="font-display text-sm text-[#8dff3a] mt-1">{h.weapon}</div>
           <div className="leading-none mt-1">
             <span className="font-crt text-7xl" style={{ color: h.mag === 0 ? "#ff3b30" : "#ffd23f" }}>
               {h.mag}
@@ -195,7 +230,7 @@ function ControlsPanel() {
     ["SHIFT", "SPRINT"],
     ["SPACE", "JUMP"],
     ["R", "RELOAD"],
-    ["1 / 2 / WHEEL", "SWAP WEAPON"],
+    ["1-4 / WHEEL", "SWAP WEAPON"],
     ["ESC", "PAUSE"],
   ];
   return (
@@ -249,7 +284,19 @@ function MenuScreen({ h, onStart }: { h: Hud; onStart: () => void }) {
               START MISSION
             </button>
             <div className="font-crt text-lg text-[#c8b8e8]">MOUSE LOCKS ON START · ESC PAUSES · SURVIVE THE WAVES</div>
-            <div className="font-crt text-xl text-[#8dff3a] neon-flicker">FIELD TIP: THE JUDGE MAGNUM DROPS A BRUTE IN TWO.</div>
+            <div className="flex gap-2 mt-1">
+              {[
+                ["RATTLER SMG", "#8dff3a"],
+                ["JUDGE MAGNUM", "#ffd23f"],
+                ["PUMPER-8", "#ff9a2a"],
+                ["BOOMSTICK", "#ff5a2a"],
+              ].map(([name, col]) => (
+                <span key={name} className="font-crt text-base px-2 py-0.5 border" style={{ color: col, borderColor: col, background: "rgba(10,4,16,0.6)" }}>
+                  {name}
+                </span>
+              ))}
+            </div>
+            <div className="font-crt text-xl text-[#8dff3a] neon-flicker">FIELD TIP: EL JEFE SHOWS UP EVERY 5TH WAVE. THE BOOMSTICK INTRODUCES HIMSELF.</div>
           </div>
         </div>
       </div>
@@ -376,9 +423,10 @@ export default function App() {
         <InGameHud h={h} />
       </div>
 
-      {/* damage + low hp */}
+      {/* damage + low hp + nuke */}
       {h.dmgId > 0 && h.state === "playing" && <div key={h.dmgId} className="absolute inset-0 dmg-flash pointer-events-none z-30" />}
       {h.state === "playing" && h.health <= 30 && h.health > 0 && <div className="absolute inset-0 lowhp pointer-events-none z-30" />}
+      {h.nukeId > 0 && h.state === "playing" && <div key={`n${h.nukeId}`} className="absolute inset-0 nuke-flash pointer-events-none z-30" />}
 
       {/* CRT layers */}
       <div className="pointer-events-none absolute inset-0 scanlines z-[45]" />

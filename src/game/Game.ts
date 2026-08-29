@@ -2280,8 +2280,8 @@ export class Game {
       const sx = cx + x * k;
       const sy = cx - y * k;
       if (sx < 2 || sx > S - 2 || sy < 2 || sy > S - 2) continue;
-      g.fillStyle = e.kind === "brute" ? "#c05aff" : e.kind === "spitter" ? "#ff9a2a" : "#8dff3a";
-      const sz = e.kind === "brute" ? 4 : 3;
+      g.fillStyle = e.boss ? "#ffd23f" : e.kind === "brute" ? "#c05aff" : e.kind === "spitter" ? "#ff9a2a" : "#8dff3a";
+      const sz = e.boss ? 6 : e.kind === "brute" ? 4 : 3;
       g.fillRect(sx - sz / 2, sy - sz / 2, sz, sz);
     }
     for (const p of this.pickups) {
@@ -2542,7 +2542,9 @@ export class Game {
       this.updatePlayer(dt);
       this.updateEnemies(dt);
       this.updateProjectiles(dt);
+      this.updateRockets(dt);
       this.updatePickups(dt);
+      this.updateUfo(dt);
       this.updateWaves(dt);
       this.updateParticles(dt);
       this.updateTracers(dt);
