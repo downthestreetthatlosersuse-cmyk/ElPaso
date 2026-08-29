@@ -91,9 +91,10 @@ interface Enemy {
   dieT: number;
   bobT: number;
   waypoint: THREE.Vector3 | null;
-  parts: { body: THREE.Object3D; armL?: THREE.Object3D; armR?: THREE.Object3D; sac?: THREE.Object3D };
+  parts: { body: THREE.Object3D; armL?: THREE.Object3D; armR?: THREE.Object3D; sac?: THREE.Object3D; cape?: THREE.Object3D };
   hitMeshes: THREE.Mesh[];
   hitPop: number;
+  flashT: number;
   baseScale: THREE.Vector3;
   groupBase: number;
   leapT: number;
@@ -237,6 +238,12 @@ export class Game {
   private decals: Decal[] = [];
   private rings: RingFX[] = [];
   private beams: BeamFX[] = [];
+  /* textures + living props */
+  private tex: Record<string, THREE.CanvasTexture> = {};
+  private flashMat = new THREE.MeshBasicMaterial({ color: 0xeaffd0 });
+  private picadoFlags: THREE.Mesh[] = [];
+  private ristras: THREE.Group[] = [];
+  private fountainT = 0;
 
   /* world */
   private colliders: AABB[] = [];
@@ -277,7 +284,7 @@ export class Game {
   private attractT = 0;
 
   /* shared geometry / materials */
-  private mat: Record<string, THREE.MeshLambertMaterial> = {};
+  private mat: Record<string, THREE.Material> = {};
   private basic: Record<string, THREE.MeshBasicMaterial> = {};
   private geo: Record<string, THREE.BufferGeometry> = {};
   private adobeMats: THREE.MeshLambertMaterial[] = [];
@@ -300,10 +307,12 @@ export class Game {
 
     this.radar = document.getElementById("radar-canvas") as HTMLCanvasElement | null;
 
+    this.buildTextures();
     this.initShared();
     this.buildSky();
     this.buildGround();
     this.buildTown();
+    this.buildProps();
     this.buildLights();
     this.buildViewmodels();
     this.initPools();
@@ -321,9 +330,9 @@ export class Game {
   }
 
   private initShared() {
-    this.mat.sand = this.lambert(0xc4834b);
+    this.mat.sand = new THREE.MeshLambertMaterial({ map: this.tex.sand });
     this.mat.sandDark = this.lambert(0xb5743f);
-    this.mat.asphalt = this.lambert(0x3a3a46);
+    this.mat.asphalt = new THREE.MeshLambertMaterial({ map: this.tex.asphalt });
     this.mat.white = this.lambert(0xe8ddc8);
     this.mat.dark = this.lambert(0x1c130e);
     this.mat.concrete = this.lambert(0x9a9aa4);
@@ -333,12 +342,19 @@ export class Game {
     this.mat.wood = this.lambert(0x9a6a30);
     this.mat.metal = this.lambert(0x4a4e58);
     this.mat.mountain = this.lambert(0x3b1f4e);
-    this.mat.alienGreen = this.lambert(0x6fdd2f);
+    this.mat.alienGreen = new THREE.MeshLambertMaterial({ map: this.tex.alienGreen });
     this.mat.alienGreenD = this.lambert(0x47961d);
-    this.mat.brutePurple = this.lambert(0x7b2fbe);
+    this.mat.alienBelly = this.lambert(0x9fe85a);
+    this.mat.brutePurple = new THREE.MeshLambertMaterial({ map: this.tex.alienPurple });
     this.mat.bruteDark = this.lambert(0x4e1d7a);
-    this.mat.spitter = this.lambert(0xe07028);
+    this.mat.spitter = new THREE.MeshLambertMaterial({ map: this.tex.alienOrange });
     this.mat.spitterD = this.lambert(0x9c4a18);
+    this.mat.bush = this.lambert(0x3a5a22);
+    this.mat.chili = this.lambert(0xc01818);
+    this.mat.cape = new THREE.MeshLambertMaterial({ color: 0x3a1050, side: THREE.DoubleSide });
+    this.mat.water = new THREE.MeshBasicMaterial({ color: 0x2a8a9a, transparent: true, opacity: 0.78 });
+    this.mat.truckRust = this.lambert(0x8a3a2a);
+    this.mat.truckBlue = this.lambert(0x3a5a7a);
     this.mat.gunmetal = this.lambert(0x2a2e35);
     this.mat.gundark = this.lambert(0x191c22);
     this.mat.gripwood = this.lambert(0x7a4a20);
@@ -351,7 +367,10 @@ export class Game {
     this.basic.bulb = new THREE.MeshBasicMaterial({ color: 0xffc46a });
     this.basic.stripe = new THREE.MeshBasicMaterial({ color: 0xd8b23a });
 
-    this.adobeMats = [0xd8a061, 0xc98b52, 0xbf7848, 0xe0b47a].map((c) => this.lambert(c));
+    this.adobeMats = [0xfff2dd, 0xf2ddc0, 0xe8d0b0, 0xfff6e6].map(
+      (c) => new THREE.MeshLambertMaterial({ map: this.tex.adobe, color: c })
+    );
+    this.mat.brick = new THREE.MeshLambertMaterial({ map: this.tex.brick });
 
     this.geo.gruntBody = new THREE.SphereGeometry(0.55, 9, 7);
     this.geo.head = new THREE.SphereGeometry(0.34, 9, 7);
@@ -365,6 +384,141 @@ export class Game {
     this.geo.sac = new THREE.SphereGeometry(0.3, 8, 6);
     this.geo.shadow = new THREE.CircleGeometry(0.7, 12);
     this.geo.particle = new THREE.BoxGeometry(0.14, 0.14, 0.14);
+  }
+
+  /* -------------------------------------------- procedural pixel textures */
+
+  private makePixelTex(size: number, painter: (g: CanvasRenderingContext2D, s: number) => void, rx = 1, ry = 1): THREE.CanvasTexture {
+    const c = document.createElement("canvas");
+    c.width = c.height = size;
+    const g = c.getContext("2d")!;
+    painter(g, size);
+    const t = new THREE.CanvasTexture(c);
+    t.magFilter = THREE.NearestFilter;
+    t.minFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(rx, ry);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }
+
+  private makeLabel(text: string, wpx: number, hpx: number, bg: string, fg: string, vertical = false): THREE.CanvasTexture {
+    const c = document.createElement("canvas");
+    c.width = wpx;
+    c.height = hpx;
+    const g = c.getContext("2d")!;
+    g.fillStyle = bg;
+    g.fillRect(0, 0, wpx, hpx);
+    g.strokeStyle = fg;
+    g.lineWidth = 6;
+    g.strokeRect(5, 5, wpx - 10, hpx - 10);
+    g.fillStyle = fg;
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    if (vertical) {
+      const letters = text.split("");
+      const lh = (hpx - 20) / letters.length;
+      g.font = `bold ${Math.floor(lh * 0.85)}px monospace`;
+      letters.forEach((ch, i) => g.fillText(ch, wpx / 2, 14 + lh * (i + 0.5)));
+    } else {
+      g.font = `bold ${Math.floor(hpx * 0.5)}px monospace`;
+      g.fillText(text, wpx / 2, hpx / 2);
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.magFilter = THREE.NearestFilter;
+    t.minFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }
+
+  private buildTextures() {
+    const speckle = (g: CanvasRenderingContext2D, s: number, base: string, cols: string[], n: number) => {
+      g.fillStyle = base;
+      g.fillRect(0, 0, s, s);
+      for (let i = 0; i < n; i++) {
+        g.fillStyle = cols[Math.floor(Math.random() * cols.length)];
+        g.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 1, 1);
+      }
+    };
+    this.tex.sand = this.makePixelTex(64, (g, s) => {
+      speckle(g, s, "#c4834b", ["#b5743f", "#d09058", "#a86838", "#cf9a66", "#b07040"], 1300);
+      for (let i = 0; i < 14; i++) {
+        g.fillStyle = "#9c6234";
+        g.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 2, 2);
+      }
+    }, 42, 42);
+    this.tex.asphalt = this.makePixelTex(64, (g, s) => {
+      speckle(g, s, "#3a3a46", ["#33333e", "#454553", "#2e2e38", "#40404c"], 1200);
+      g.fillStyle = "#26262e";
+      for (let i = 0; i < 3; i++) {
+        let x = Math.floor(Math.random() * s);
+        let y = 0;
+        while (y < s) {
+          g.fillRect(x, y, 1, 2);
+          y += 2;
+          x += Math.floor(Math.random() * 3) - 1;
+        }
+      }
+    }, 26, 4);
+    this.tex.adobe = this.makePixelTex(64, (g, s) => {
+      speckle(g, s, "#d8c4a8", ["#cbb698", "#e2d0b4", "#c2ab8c", "#d0bda0"], 1100);
+      for (let i = 0; i < 8; i++) {
+        g.fillStyle = "rgba(120,90,60,0.25)";
+        g.fillRect(0, Math.floor(Math.random() * s), s, 1);
+      }
+    });
+    this.tex.brick = this.makePixelTex(64, (g, s) => {
+      g.fillStyle = "#7c6050";
+      g.fillRect(0, 0, s, s);
+      const cols = ["#a44a30", "#9c4228", "#b05636", "#983e26"];
+      for (let row = 0; row < 8; row++) {
+        const off = row % 2 === 0 ? 0 : 4;
+        for (let bx = -1; bx < 9; bx++) {
+          g.fillStyle = cols[Math.floor(Math.random() * cols.length)];
+          g.fillRect(bx * 8 + off + 1, row * 8 + 1, 6, 6);
+        }
+      }
+    }, 3, 2);
+    this.tex.plaza = this.makePixelTex(64, (g, s) => {
+      g.fillStyle = "#8a6a48";
+      g.fillRect(0, 0, s, s);
+      for (let cy = 0; cy < 8; cy++) {
+        for (let cx = 0; cx < 8; cx++) {
+          const v = 168 + Math.floor(Math.random() * 40);
+          g.fillStyle = `rgb(${v},${Math.floor(v * 0.72)},${Math.floor(v * 0.48)})`;
+          g.fillRect(cx * 8 + 1, cy * 8 + 1, 6, 6);
+        }
+      }
+    }, 5, 5);
+    const mottle = (base: string, hi: string, lo: string, dot: string) =>
+      this.makePixelTex(32, (g, s) => {
+        g.fillStyle = base;
+        g.fillRect(0, 0, s, s);
+        for (let i = 0; i < 26; i++) {
+          g.fillStyle = Math.random() > 0.5 ? hi : lo;
+          g.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 2 + Math.floor(Math.random() * 3), 2 + Math.floor(Math.random() * 3));
+        }
+        for (let i = 0; i < 40; i++) {
+          g.fillStyle = dot;
+          g.fillRect(Math.floor(Math.random() * s), Math.floor(Math.random() * s), 1, 1);
+        }
+      });
+    this.tex.alienGreen = mottle("#5fae26", "#79d836", "#47961d", "#2c5e12");
+    this.tex.alienPurple = mottle("#6a28a8", "#8b3fd0", "#4e1d7a", "#35124e");
+    this.tex.alienOrange = mottle("#c86020", "#e07028", "#9c4a18", "#6e3410");
+    this.tex.awning = this.makePixelTex(32, (g, s) => {
+      for (let x = 0; x < s; x += 8) {
+        g.fillStyle = (x / 8) % 2 === 0 ? "#e8632a" : "#f2e6c8";
+        g.fillRect(x, 0, 8, s);
+      }
+      g.fillStyle = "rgba(60,20,10,0.35)";
+      for (let y = 0; y < s; y += 4) g.fillRect(0, y, s, 1);
+    });
+    this.tex.signElPaso = this.makeLabel("EL PASO", 256, 96, "#1a5a34", "#e8f4e0");
+    this.tex.signMotel = this.makeLabel("MOTEL", 96, 256, "#2a1040", "#ff2e88", true);
+    this.tex.signTacos = this.makeLabel("TACOS", 160, 64, "#7a2f12", "#ffd23f");
   }
 
   private buildSky() {
@@ -474,7 +628,7 @@ export class Game {
     this.scene.add(dashes);
 
     /* plaza */
-    const plaza = new THREE.Mesh(new THREE.CircleGeometry(11, 18), this.lambert(0xd8b078));
+    const plaza = new THREE.Mesh(new THREE.CircleGeometry(11, 18), new THREE.MeshLambertMaterial({ map: this.tex.plaza }));
     plaza.rotation.x = -Math.PI / 2;
     plaza.position.set(0, 0.018, -30);
     this.scene.add(plaza);
@@ -495,7 +649,7 @@ export class Game {
     const neonColors = [0xff2e88, 0x2ee6ff, 0xffe14d];
     B.forEach(([x, z, w, d, h, ci], bi) => {
       const g = new THREE.Group();
-      const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), this.adobeMats[ci]);
+      const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), bi % 7 === 3 ? this.mat.brick : this.adobeMats[ci]);
       body.position.y = h / 2;
       g.add(body);
       this.envMeshes.push(body);
@@ -648,6 +802,246 @@ export class Game {
       const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.2, 6, 5), this.basic.bulb);
       bulb.position.set(x, 4.4, z);
       this.scene.add(bulb);
+    }
+  }
+
+  private buildProps() {
+    /* papel picado banners strung across the plaza and road */
+    const flagColors = [0xff6a2a, 0x2ec4b6, 0xffd23f, 0xe8384f, 0x8dff3a];
+    const picado = (x1: number, z1: number, x2: number, z2: number, h: number) => {
+      const pts: THREE.Vector3[] = [];
+      const N = 14;
+      for (let i = 0; i <= N; i++) {
+        const t = i / N;
+        pts.push(new THREE.Vector3(x1 + (x2 - x1) * t, h - Math.sin(t * Math.PI) * 1.3, z1 + (z2 - z1) * t));
+      }
+      const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
+      this.scene.add(new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0x241208 })));
+      for (let i = 1; i < N; i++) {
+        const fm = new THREE.MeshBasicMaterial({ color: flagColors[i % flagColors.length], side: THREE.DoubleSide });
+        const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.7), fm);
+        flag.position.copy(pts[i]).add(this.v1.set(0, -0.38, 0));
+        flag.rotation.y = rand(-0.5, 0.5);
+        flag.userData.i = this.picadoFlags.length;
+        this.picadoFlags.push(flag);
+        this.scene.add(flag);
+      }
+    };
+    picado(-11, -23.5, 11, -23.5, 5.6);
+    picado(-9, -36.5, 9, -36.5, 5.4);
+    picado(-7, 4.8, 7, 4.8, 5.2);
+
+    /* plaza fountain — the heart of the defense */
+    const f = new THREE.Group();
+    const basin = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.5, 0.8, 14), this.mat.concrete);
+    basin.position.y = 0.4;
+    f.add(basin);
+    const water = new THREE.Mesh(new THREE.CylinderGeometry(2.9, 2.9, 0.12, 14), this.mat.water);
+    water.position.y = 0.78;
+    f.add(water);
+    const col = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.5, 1.8, 8), this.mat.concrete);
+    col.position.y = 1.4;
+    f.add(col);
+    const bowl = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 0.45, 0.32, 10), this.mat.concrete);
+    bowl.position.y = 2.3;
+    f.add(bowl);
+    const top = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.08, 10), this.mat.water);
+    top.position.y = 2.42;
+    f.add(top);
+    f.position.set(0, 0, -30);
+    this.scene.add(f);
+    this.addCollider(0, -30, 3.4, 3.4);
+
+    /* taco carts at the plaza rim */
+    const stall = (x: number, z: number, rot: number) => {
+      const s = new THREE.Group();
+      const cart = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.9, 1.2), this.mat.wood);
+      cart.position.y = 0.75;
+      s.add(cart);
+      for (const wx of [-0.95, 0.95]) {
+        const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.1, 10), this.mat.gundark);
+        wheel.rotation.z = Math.PI / 2;
+        wheel.position.set(wx, 0.35, 0.68);
+        s.add(wheel);
+      }
+      const fruitCols = [0xe8384f, 0xffd23f, 0x6cff5a, 0xff9a2a];
+      for (let i = 0; i < 8; i++) {
+        const fruit = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 5), this.lambert(fruitCols[i % 4]));
+        fruit.position.set(-0.8 + (i % 4) * 0.28, 1.3, -0.25 + Math.floor(i / 4) * 0.25);
+        s.add(fruit);
+      }
+      const crate = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.35, 0.5), this.mat.wood);
+      crate.position.set(0.85, 1.38, 0.1);
+      s.add(crate);
+      for (const px of [-1.15, 1.15]) {
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.7, 6), this.mat.wood);
+        pole.position.set(px, 1.6, -0.5);
+        s.add(pole);
+      }
+      const awn = new THREE.Mesh(
+        new THREE.PlaneGeometry(2.9, 1.5),
+        new THREE.MeshLambertMaterial({ map: this.tex.awning, side: THREE.DoubleSide })
+      );
+      awn.position.set(0, 2.5, 0.15);
+      awn.rotation.x = -1.05;
+      s.add(awn);
+      const sign = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.5, 0.6),
+        new THREE.MeshBasicMaterial({ map: this.tex.signTacos, side: THREE.DoubleSide })
+      );
+      sign.position.set(0, 2.35, 0.95);
+      s.add(sign);
+      s.position.set(x, 0, z);
+      s.rotation.y = rot;
+      this.scene.add(s);
+      this.addCollider(x, z, 1.5, 0.9);
+    };
+    stall(-8, -22.5, 0.1);
+    stall(8.5, -36.5, Math.PI + 0.15);
+
+    /* parked pickups along the curb */
+    const truck = (x: number, z: number, rot: number, body: THREE.Material) => {
+      const t = new THREE.Group();
+      const bed = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.7, 1.5), body);
+      bed.position.set(0.7, 0.85, 0);
+      t.add(bed);
+      const cab = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.9, 1.45), body);
+      cab.position.set(-1.15, 1.05, 0);
+      t.add(cab);
+      const hood = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.5, 1.45), body);
+      hood.position.set(-2.3, 0.78, 0);
+      t.add(hood);
+      const glass = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.42, 1.3), this.mat.dark);
+      glass.position.set(-1.15, 1.32, 0);
+      t.add(glass);
+      const bumper = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.32, 1.55), this.mat.metal);
+      bumper.position.set(-2.86, 0.62, 0);
+      t.add(bumper);
+      for (const wx of [-1.7, 1.5]) {
+        for (const wz of [-0.78, 0.78]) {
+          const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, 0.26, 10), this.mat.gundark);
+          wheel.rotation.z = Math.PI / 2;
+          wheel.position.set(wx, 0.38, wz);
+          t.add(wheel);
+        }
+      }
+      t.position.set(x, 0, z);
+      t.rotation.y = rot;
+      this.scene.add(t);
+      this.addCollider(x, z, 2.6, 1.1);
+    };
+    truck(-34, 6.2, 0, this.mat.truckRust);
+    truck(44, -6.2, Math.PI, this.mat.truckBlue);
+
+    /* benches facing the fountain */
+    const bench = (x: number, z: number, rot: number) => {
+      const b = new THREE.Group();
+      const seat = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.12, 0.5), this.mat.wood);
+      seat.position.y = 0.5;
+      b.add(seat);
+      const back = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.55, 0.1), this.mat.wood);
+      back.position.set(0, 0.85, -0.24);
+      b.add(back);
+      for (const lx of [-0.75, 0.75]) {
+        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.5, 0.5), this.mat.gundark);
+        leg.position.set(lx, 0.25, 0);
+        b.add(leg);
+      }
+      b.position.set(x, 0, z);
+      b.rotation.y = rot;
+      this.scene.add(b);
+      this.addCollider(x, z, 1.0, 0.45);
+    };
+    bench(-8.4, -30, Math.PI / 2);
+    bench(8.4, -30, -Math.PI / 2);
+    bench(0, -21.8, 0);
+
+    /* chili ristras by the doorways */
+    const ristra = (x: number, z: number) => {
+      const r = new THREE.Group();
+      const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 1.1, 4), this.mat.dark);
+      cord.position.y = 2.45;
+      r.add(cord);
+      for (let i = 0; i < 6; i++) {
+        const ch = new THREE.Mesh(new THREE.SphereGeometry(0.075, 6, 5), this.mat.chili);
+        ch.scale.set(1, 1.5, 1);
+        ch.position.set(Math.sin(i * 2.4) * 0.05, 2.7 - i * 0.18, 0);
+        r.add(ch);
+      }
+      r.position.set(x, 0, z);
+      this.scene.add(r);
+      this.ristras.push(r);
+    };
+    ristra(-1.6, -42.6);
+    ristra(1.6, -42.6);
+    ristra(-26.5, -24.6);
+    ristra(13.5, -24.7);
+
+    /* highway sign at the wall + vertical motel neon */
+    const signGrp = new THREE.Group();
+    for (const px of [-2.4, 2.4]) {
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 4.6, 6), this.mat.metal);
+      pole.position.set(px, 2.3, 0);
+      signGrp.add(pole);
+    }
+    const boardMat = new THREE.MeshBasicMaterial({ map: this.tex.signElPaso });
+    const board = new THREE.Mesh(new THREE.BoxGeometry(6.4, 2.3, 0.25), boardMat);
+    board.position.y = 4.4;
+    signGrp.add(board);
+    this.neonMats.push(boardMat);
+    signGrp.position.set(-38, 0, -82);
+    this.scene.add(signGrp);
+
+    const motelMat = new THREE.MeshBasicMaterial({ map: this.tex.signMotel, side: THREE.DoubleSide });
+    const motel = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 3.4), motelMat);
+    motel.position.set(37.4, 3.2, -8);
+    motel.rotation.y = -Math.PI / 2;
+    this.scene.add(motel);
+    this.neonMats.push(motelMat);
+
+    /* street furniture */
+    const hyd = new THREE.Group();
+    const hydBody = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 0.55, 8), this.lambert(0xc02828));
+    hydBody.position.y = 0.3;
+    hyd.add(hydBody);
+    const hydCap = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), this.lambert(0xc02828));
+    hydCap.position.y = 0.62;
+    hyd.add(hydCap);
+    hyd.position.set(-13.5, 0, -5.2);
+    this.scene.add(hyd);
+    const bin = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.44, 0.95, 10), this.mat.metal);
+    bin.position.set(35.5, 0.48, 6.5);
+    this.scene.add(bin);
+    const mbox = new THREE.Group();
+    const mboxBody = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.45, 0.4), this.lambert(0x2a4a8a));
+    mboxBody.position.y = 1.0;
+    mbox.add(mboxBody);
+    const mboxPole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.0, 6), this.mat.gundark);
+    mboxPole.position.y = 0.5;
+    mbox.add(mboxPole);
+    mbox.position.set(-35.5, 0, 6.8);
+    this.scene.add(mbox);
+
+    /* dry bushes tucked against building corners */
+    const bushSpots: [number, number][] = [
+      [-19, -23.5], [-25, -13.5], [6.5, -24.2], [19.5, -25], [-37, -14.5], [25, -19.5],
+      [-44, 7.5], [36.5, 8], [55, -52], [-55, -52], [-5.5, -13.5], [5.5, 8.5],
+    ];
+    for (const [x, z] of bushSpots) {
+      const bush = new THREE.Mesh(new THREE.IcosahedronGeometry(rand(0.42, 0.6), 0), this.mat.bush);
+      bush.scale.set(1.25, 0.62, 1.25);
+      bush.position.set(x, 0.28, z);
+      bush.rotation.y = rand(0, 3);
+      this.scene.add(bush);
+    }
+
+    /* rubble against the border wall */
+    const wallRubble: [number, number, number][] = [[-70, -84.5, 1.6], [-20, -85.5, 1.1], [30, -84.5, 1.8], [65, -85, 1.2], [2, -86, 0.9]];
+    for (const [x, z, s] of wallRubble) {
+      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(s, 0), this.mat.rock);
+      rock.position.set(x, s * 0.4, z);
+      rock.rotation.set(rand(0, 3), rand(0, 3), 0);
+      this.scene.add(rock);
     }
   }
 
@@ -995,8 +1389,29 @@ export class Game {
         arm.position.set(0.62 * s, 1.05, 0);
         arm.rotation.z = s * 2.4;
         g.add(arm);
+        const claw = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.24, 4), this.mat.alienBelly);
+        claw.position.set(0, -0.34, 0);
+        claw.rotation.x = Math.PI;
+        arm.add(claw);
         if (s === -1) parts.armL = arm;
         else parts.armR = arm;
+      }
+      const belly = new THREE.Mesh(new THREE.SphereGeometry(0.36, 8, 6), this.mat.alienBelly);
+      belly.position.set(0, 0.82, 0.3);
+      belly.scale.set(1, 1.15, 0.55);
+      g.add(belly);
+      const fin = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.5, 4), this.mat.alienGreenD);
+      fin.position.set(0, 1.4, -0.42);
+      fin.rotation.x = 0.55;
+      g.add(fin);
+      const mouth = new THREE.Mesh(new THREE.CircleGeometry(0.1, 8), this.basic.mouth);
+      mouth.position.set(0, 1.72, 0.32);
+      g.add(mouth);
+      for (const s of [-1, 1]) {
+        const spike = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.3, 5), this.mat.alienGreenD);
+        spike.position.set(0.44 * s, 1.48, -0.05);
+        spike.rotation.z = -s * 0.6;
+        g.add(spike);
       }
       parts.body = body;
       addShadow(1);
@@ -1020,8 +1435,27 @@ export class Game {
         const fist = new THREE.Mesh(this.geo.fist, this.mat.bruteDark);
         fist.position.set(1.05 * s, 1.1, 0.1);
         g.add(fist);
-        if (s === -1) parts.armL = fist;
-        else parts.armR = fist;
+        const knuckle = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.28, 4), this.mat.brass);
+        knuckle.position.set(0, 0, 0.3);
+        knuckle.rotation.x = Math.PI / 2;
+        fist.add(knuckle);
+        const pauldron = new THREE.Mesh(new THREE.SphereGeometry(0.34, 7, 6), this.mat.bruteDark);
+        pauldron.position.set(0.85 * s, 1.98, 0);
+        pauldron.scale.set(1, 0.7, 1);
+        g.add(pauldron);
+        const tusk = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.3, 5), this.mat.brass);
+        tusk.position.set(0.24 * s, 2.0, 0.33);
+        tusk.rotation.z = -s * 0.25;
+        g.add(tusk);
+      }
+      const plate = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.95, 0.26), this.mat.bruteDark);
+      plate.position.set(0, 1.3, 0.5);
+      g.add(plate);
+      for (let i = 0; i < 3; i++) {
+        const spine = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.55, 5), this.mat.bruteDark);
+        spine.position.set(0, 1.95 - i * 0.55, -0.56);
+        spine.rotation.x = -0.5;
+        g.add(spine);
       }
       parts.body = body;
       addShadow(1.7);
@@ -1047,6 +1481,18 @@ export class Game {
       sac.position.set(0, 1.1, -0.42);
       g.add(sac);
       parts.sac = sac;
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        const leg = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.55, 5), this.mat.spitterD);
+        leg.position.set(Math.cos(a) * 0.45, 0.28, Math.sin(a) * 0.45);
+        leg.rotation.z = -Math.cos(a) * 0.9;
+        leg.rotation.x = Math.sin(a) * 0.9;
+        g.add(leg);
+      }
+      const tail = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.7, 6), this.mat.spitter);
+      tail.position.set(0, 0.55, -0.6);
+      tail.rotation.x = -1.9;
+      g.add(tail);
       parts.body = body;
       addShadow(1.1);
     }
@@ -1062,6 +1508,14 @@ export class Game {
       sac.position.set(0, 1.2, -0.55);
       g.add(sac);
       parts.sac = sac;
+      const cape = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 2.5), this.mat.cape);
+      cape.position.set(0, 1.35, -0.85);
+      cape.rotation.x = 0.18;
+      g.add(cape);
+      parts.cape = cape;
+      const belt = new THREE.Mesh(new THREE.BoxGeometry(1.65, 0.3, 1.1), this.mat.brass);
+      belt.position.set(0, 0.55, 0);
+      g.add(belt);
     }
 
     const e: Enemy = {
@@ -1082,6 +1536,7 @@ export class Game {
       parts,
       hitMeshes,
       hitPop: 0,
+      flashT: 0,
       baseScale,
       groupBase: kind === "boss" ? 1.5 : 1,
       leapT: 0,
@@ -1184,6 +1639,8 @@ export class Game {
     this.hitList = this.hitList.filter((m) => !e.hitMeshes.includes(m));
     const p = e.group.position;
     this.burst(this.v1.set(p.x, 1.2, p.z), 0x6fdd2f, e.kind === "brute" ? 26 : 14, e.kind === "brute" ? 7 : 5.5);
+    this.freeze = Math.max(this.freeze, e.boss ? 0.09 : e.kind === "brute" ? 0.05 : 0.028);
+    this.fovKick += e.boss ? 2 : e.kind === "brute" ? 1.2 : 0.5;
     /* goo splat decals */
     const splats = e.kind === "brute" ? 3 : 2;
     for (let i = 0; i < splats; i++) {
@@ -1244,6 +1701,10 @@ export class Game {
     if (e.dying) return;
     e.hp -= dmg;
     e.hitPop = 0.22;
+    const bm = e.parts.body as THREE.Mesh;
+    bm.userData.origMat = bm.userData.origMat || bm.material;
+    bm.material = this.flashMat;
+    e.flashT = 0.07;
     if (isHead) {
       sfx.headshot();
       this.showText(point.x, point.y + 0.45, point.z, "HEADSHOT", "#ffd23f");
@@ -1474,6 +1935,19 @@ export class Game {
       posAttr.setX(i, posAttr.getX(i) + Math.sin(t * 0.5 + i) * 0.002);
     }
     posAttr.needsUpdate = true;
+    /* papel picado + ristras flutter */
+    for (const fl of this.picadoFlags) {
+      fl.rotation.z = Math.sin(t * 2.3 + (fl.userData.i as number) * 0.7) * 0.14;
+    }
+    for (let i = 0; i < this.ristras.length; i++) {
+      this.ristras[i].rotation.z = Math.sin(t * 1.8 + i * 2) * 0.06;
+    }
+    /* fountain spray */
+    this.fountainT -= dt;
+    if (this.fountainT <= 0) {
+      this.fountainT = 1.3;
+      this.burst(this.v1.set(0, 2.6, -30), 0x9fd8e8, 6, 2.4);
+    }
   }
 
   private updateCombo(dt: number) {
@@ -1523,6 +1997,7 @@ export class Game {
     if (w.kind !== "rocket") this.casing();
     document.documentElement.style.setProperty("--spr", `${Math.round(6 + this.recoil * 14)}px`);
     this.muzzleSmoke(this.weaponIdx === 0 ? 1 : 2);
+    this.fovKick += w.fovKick;
     this.gunLight.intensity = w.kind === "rocket" ? 90 : this.gunLight.intensity;
 
     /* muzzle world position */
@@ -1760,22 +2235,32 @@ export class Game {
     this.kickRV += (-90 * this.kickR - 11 * this.kickRV) * dt;
     this.kickR += this.kickRV * dt;
 
-    /* sprint FOV kick */
-    const fovTarget = sprint && horiz > 1 ? 83 : 75;
-    if (Math.abs(this.camera.fov - fovTarget) > 0.05) {
-      this.camera.fov += (fovTarget - this.camera.fov) * Math.min(1, 9 * dt);
-      this.camera.updateProjectionMatrix();
+    /* fov: sprint stretch + fire punch, springy */
+    this.fovKick *= Math.pow(0.0008, dt);
+    const fovTarget = 77 + (sprint && horiz > 1 ? 9 : 0) + this.fovKick;
+    this.camera.fov += (fovTarget - this.camera.fov) * Math.min(1, 16 * dt);
+    this.camera.updateProjectionMatrix();
+
+    /* footsteps */
+    if (this.onGround && horiz > 2.5) {
+      this.stepAcc += horiz * dt;
+      if (this.stepAcc > (sprint ? 2.3 : 2.9)) {
+        this.stepAcc = 0;
+        sfx.step();
+        if (Math.random() < 0.35) this.burst(this.v1.set(this.pos.x, 0.05, this.pos.z), 0xc4a06a, 2, 1.1);
+      }
     }
 
     this.shake = Math.max(0, this.shake - dt * 2.6);
     const sh = this.shake * this.shake * 0.35;
+    const breathe = Math.sin(this.clock.elapsedTime * 1.7) * 0.01;
     this.camera.position.set(
       this.pos.x + rand(-sh, sh),
-      eyeY + rand(-sh, sh),
+      eyeY + breathe + rand(-sh, sh),
       this.pos.z + rand(-sh, sh)
     );
     this.camera.rotation.set(
-      this.pitch + this.kickP + rand(-sh, sh) * 0.4,
+      this.pitch + this.kickP + breathe * 0.25 + rand(-sh, sh) * 0.4,
       this.yaw,
       this.kickR * 0.06 + rand(-sh, sh) * 0.3
     );
@@ -2008,6 +2493,16 @@ export class Game {
         const pop = 1 + (e.hitPop / 0.22) * 0.22;
         e.parts.body.scale.set(e.baseScale.x * pop, e.baseScale.y / pop, e.baseScale.z * pop);
       }
+      if (e.flashT > 0) {
+        e.flashT -= dt;
+        if (e.flashT <= 0) {
+          const om = e.parts.body.userData.origMat as THREE.Material | undefined;
+          if (om) (e.parts.body as THREE.Mesh).material = om;
+        }
+      }
+      if (e.parts.cape) {
+        e.parts.cape.rotation.x = 0.18 + Math.sin(this.clock.elapsedTime * 6 + gp.x) * 0.12 + (moving ? 0.22 : 0);
+      }
     }
   }
 
@@ -2075,7 +2570,7 @@ export class Game {
     this.v1.z += rand(-0.006, 0.006);
     this.v1.normalize();
     r.g.position.copy(this.muzzleV);
-    r.vel.copy(this.v1).multiplyScalar(30);
+    r.vel.copy(this.v1).multiplyScalar(48);
     r.g.quaternion.setFromUnitVectors(this.v2.set(0, 1, 0), this.v1);
   }
 
@@ -2091,11 +2586,15 @@ export class Game {
       if (e.dying) continue;
       const ep = e.group.position;
       const d = Math.hypot(ep.x - at.x, ep.z - at.z);
-      if (d < 6.2) {
-        const dmg = Math.round(WEAPONS[3].dmg * (1 - (d / 6.2) * 0.55));
+      if (d < 7.2) {
+        const dmg = Math.round(WEAPONS[3].dmg * (1 - (d / 7.2) * 0.55));
         this.damageEnemy(e, dmg, this.v1.set(ep.x, 1.2, ep.z), false);
       }
     }
+    /* backblast — respect the blast radius, tex */
+    const pd = Math.hypot(this.pos.x - at.x, this.pos.z - at.z);
+    if (pd < 7.2) this.damagePlayer(Math.round(22 * (1 - pd / 7.2)), "BOOMSTICK BACKBLAST");
+    this.fovKick += 2.2;
   }
 
   private updateRockets(dt: number) {
@@ -2525,7 +3024,11 @@ export class Game {
   private loop = () => {
     if (this.disposed) return;
     this.raf = requestAnimationFrame(this.loop);
-    const dt = Math.min(0.05, this.clock.getDelta());
+    let dt = Math.min(0.05, this.clock.getDelta());
+    if (this.freeze > 0 && this.state === "playing") {
+      this.freeze -= dt;
+      dt *= 0.15;
+    }
 
     /* neon flicker */
     this.neonTick -= dt;

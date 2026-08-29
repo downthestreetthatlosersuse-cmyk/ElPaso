@@ -166,6 +166,10 @@ export const sfx = {
   land() {
     noise(0.08, 0.24, 480);
   },
+  step() {
+    noise(0.05, 0.1, 520);
+    osc("sine", 92, 58, 0.05, 0.09);
+  },
   switch() {
     osc("square", 340, 720, 0.06, 0.18);
   },
