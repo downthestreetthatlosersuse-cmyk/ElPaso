@@ -2566,8 +2566,6 @@ export class Game {
     const gun = this.guns[this.weaponIdx];
     const mz = [[0, 0.015, -0.56], [0, 0.035, -0.38], [0, 0.045, -0.46], [0, 0.02, -0.47]][this.weaponIdx];
     this.muzzleV.set(mz[0], mz[1], mz[2]).applyMatrix4(gun.matrixWorld);
-    /* hot sparks spit forward from the muzzle */
-    this.burst(this.muzzleV, 0xffd23f, this.weaponIdx === 0 ? 2 : 4, 3.4);
 
     if (w.kind === "rocket") {
       this.launchRocket();
