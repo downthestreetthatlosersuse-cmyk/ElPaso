@@ -238,6 +238,16 @@ export class Game {
   private decals: Decal[] = [];
   private rings: RingFX[] = [];
   private beams: BeamFX[] = [];
+  /* dynamic lighting */
+  private eventLights: { light: THREE.PointLight; life: number; max: number; base: number }[] = [];
+  private fireLights: THREE.PointLight[] = [];
+  private fireBarrelSpots = [
+    new THREE.Vector3(30, 1.4, -82),
+    new THREE.Vector3(-30, 1.4, -82),
+    new THREE.Vector3(58, 1.4, -82),
+  ];
+  private flames: THREE.Mesh[] = [];
+  private ufoSpot!: THREE.SpotLight;
   /* textures + living props */
   private tex: Record<string, THREE.CanvasTexture> = {};
   private flashMat = new THREE.MeshBasicMaterial({ color: 0xeaffd0 });
@@ -318,9 +328,16 @@ export class Game {
     this.buildLights();
     this.buildViewmodels();
     this.initPools();
+    this.initDynamicLights();
     this.bindEvents();
 
     this.spawnAttractCrowd();
+    /* first-person gear + particles never cast shadows */
+    this.gunGroup.traverse((o) => {
+      o.userData.noShadow = true;
+    });
+    this.pMesh.userData.noShadow = true;
+    this.enableShadows();
     this.hudSync();
     this.loop();
   }
@@ -541,6 +558,7 @@ export class Game {
       geo,
       new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false })
     );
+    sky.userData.noShadow = true;
     this.scene.add(sky);
 
     /* sun */
@@ -1017,6 +1035,33 @@ export class Game {
     ristra(-26.5, -24.6);
     ristra(13.5, -24.7);
 
+    /* burning drums at the border barricade — flickering light handled in updateLights */
+    for (const p of this.fireBarrelSpots) {
+      const b = new THREE.Group();
+      const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 1.15, 10), this.lambert(0x7a4a30));
+      drum.position.y = 0.58;
+      b.add(drum);
+      const band = new THREE.Mesh(new THREE.CylinderGeometry(0.57, 0.57, 0.1, 10), this.mat.gundark);
+      band.position.y = 0.35;
+      b.add(band);
+      const mouth = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.44, 0.08, 10), this.mat.dark);
+      mouth.position.y = 1.14;
+      b.add(mouth);
+      const flame = new THREE.Mesh(
+        new THREE.ConeGeometry(0.4, 0.95, 7),
+        new THREE.MeshBasicMaterial({ color: 0xff9a30, transparent: true, opacity: 0.92, blending: THREE.AdditiveBlending, depthWrite: false })
+      );
+      flame.position.y = 1.5;
+      b.add(flame);
+      this.flames.push(flame);
+      const ember = new THREE.Mesh(new THREE.SphereGeometry(0.3, 7, 5), new THREE.MeshBasicMaterial({ color: 0xffc46a }));
+      ember.position.y = 1.16;
+      b.add(ember);
+      b.position.set(p.x, 0, p.z);
+      this.scene.add(b);
+      this.addCollider(p.x, p.z, 0.65, 0.65);
+    }
+
     /* highway sign at the wall + vertical motel neon */
     const signGrp = new THREE.Group();
     for (const px of [-2.4, 2.4]) {
@@ -1120,12 +1165,19 @@ export class Game {
       this.eventLights.push({ light: l, life: 0, max: 1, base: 0 });
     }
     /* burning drums */
-    for (const p of this.fireBarrelSpots) {
-      const l = new THREE.PointLight(0xff7a2a, 14, 11, 2);
-      l.position.copy(p);
+    for (let i = 0; i < this.fireBarrelSpots.length; i++) {
+      const l = new THREE.PointLight(0xff7a2a, 14, 12, 2);
+      l.position.copy(this.fireBarrelSpots[i]);
       this.scene.add(l);
       this.fireLights.push(l);
+      const flame = this.flames[i];
+      if (flame) flame.userData.lightIdx = i;
     }
+    /* UFO raid spotlight */
+    this.ufoSpot = new THREE.SpotLight(0xb46aff, 0, 70, 0.55, 0.55, 1.8);
+    this.ufoSpot.visible = false;
+    this.scene.add(this.ufoSpot);
+    this.scene.add(this.ufoSpot.target);
   }
 
   private fireEventLight(x: number, y: number, z: number, color: number, intensity: number, life: number) {
@@ -1663,6 +1715,7 @@ export class Game {
     for (const m of hitMeshes) m.userData.e = e;
     if (kind === "boss") g.scale.set(1.5, 1.5, 1.5);
     g.position.set(x, 0, z);
+    this.shadowify(g);
     this.scene.add(g);
     this.hitList.push(...hitMeshes);
     this.enemies.push(e);
@@ -1682,6 +1735,7 @@ export class Game {
     this.spawnBeam(e.group.position);
     this.spawnRing(e.group.position, 0x8dff3a, 3.2, 0.45);
     this.burst(this.v1.set(x, 1.2, z), 0x8dff3a, 8, 3.5);
+    this.fireEventLight(x, 2, z, 0x8dff3a, 110, 0.45);
     sfx.portal();
   }
 
@@ -1702,6 +1756,7 @@ export class Game {
     this.spawnRing(p, 0xc05aff, 9, 0.7);
     const b = this.spawnBeam(p, 0xc05aff);
     b.mesh.scale.set(2.4, 1, 2.4);
+    this.fireEventLight(p.x, 2.5, p.z, 0xc05aff, 300, 0.7);
     this.shake += 0.5;
     this.hudSync();
   }
@@ -1714,19 +1769,19 @@ export class Game {
     if (first) {
       hud.banner("UFO SIGHTED", "DROP ZONE: LA PLAZA");
       sfx.portal();
-      const b = this.spawnBeam(this.v3.set(0, 0, -30), 0xb46aff);
+      const b = this.spawnBeam(this.v3.set(18, 0, -15), 0xb46aff);
       b.mesh.scale.set(2.6, 1, 2.6);
     }
-    this.v1.set(0, 16, -30);
+    this.v1.set(18, 16, -15);
     u.g.position.lerp(this.v1, Math.min(1, dt * 2.4));
     u.g.rotation.y += dt * 2.4;
     for (let i = 0; i < u.lights.length; i++) u.lights[i].visible = true;
     if (this.ufoEvt >= 1.1 && !this.ufoEvtSpawned) {
       this.ufoEvtSpawned = true;
-      const spots: [number, number][] = [[-6, -25], [6, -26], [-4, -35], [5, -34]];
+      const spots: [number, number][] = [[13, -11], [23, -11], [13, -19], [23, -19]];
       for (const [sx, sz] of spots) this.spawnEnemy("grunt", sx, sz);
-      this.spawnEnemy("spitter", 0, -22);
-      this.spawnRing(this.v2.set(0, 0, -30), 0xb46aff, 8, 0.6);
+      this.spawnEnemy("spitter", 18, -8);
+      this.spawnRing(this.v2.set(18, 0, -15), 0xb46aff, 8, 0.6);
     }
     if (this.ufoEvt >= 4.4) {
       this.spawnRing(this.v2.set(u.g.position.x, 0, u.g.position.z), 0xb46aff, 6, 0.5);
@@ -1751,6 +1806,7 @@ export class Game {
     this.burst(this.v1.set(p.x, 1.2, p.z), 0x6fdd2f, e.kind === "brute" ? 26 : 14, e.kind === "brute" ? 7 : 5.5);
     this.freeze = Math.max(this.freeze, e.boss ? 0.09 : e.kind === "brute" ? 0.05 : 0.028);
     this.fovKick += e.boss ? 2 : e.kind === "brute" ? 1.2 : 0.5;
+    this.fireEventLight(p.x, 1.6, p.z, e.boss ? 0xc05aff : 0x8dff3a, e.boss ? 260 : e.kind === "brute" ? 170 : 80, 0.3);
     /* goo splat decals */
     const splats = e.kind === "brute" ? 3 : 2;
     for (let i = 0; i < splats; i++) {
@@ -2056,7 +2112,39 @@ export class Game {
     this.fountainT -= dt;
     if (this.fountainT <= 0) {
       this.fountainT = 1.3;
-      this.burst(this.v1.set(0, 2.6, -30), 0x9fd8e8, 6, 2.4);
+      this.burst(this.v1.set(18, 2.6, -15), 0x9fd8e8, 6, 2.4);
+    }
+  }
+
+  private updateLights(dt: number) {
+    /* pooled event lights decay out */
+    for (const e of this.eventLights) {
+      if (e.life > 0) {
+        e.life -= dt;
+        const t = Math.max(0, e.life / e.max);
+        e.light.intensity = e.base * t * t;
+        if (e.life <= 0) e.light.visible = false;
+      }
+    }
+    /* burning drums flicker */
+    const t = this.clock.elapsedTime;
+    for (let i = 0; i < this.fireLights.length; i++) {
+      this.fireLights[i].intensity = 15 + Math.sin(t * 11 + i * 2.1) * 3.5 + Math.sin(t * 23 + i * 5) * 2;
+    }
+    for (let i = 0; i < this.flames.length; i++) {
+      const fl = this.flames[i];
+      fl.scale.set(1 + Math.sin(t * 13 + i * 3) * 0.16, 1.2 + Math.sin(t * 17 + i) * 0.3, 1);
+      fl.rotation.y += dt * 5;
+    }
+    /* UFO raid spotlight tracks the ship while it holds over the plaza */
+    if (this.ufoEvt >= 0) {
+      const u = this.ufos[0];
+      this.ufoSpot.visible = true;
+      this.ufoSpot.position.copy(u.g.position);
+      this.ufoSpot.target.position.set(18, 0, -15);
+      this.ufoSpot.intensity = 340 + Math.sin(t * 9) * 70;
+    } else {
+      this.ufoSpot.visible = false;
     }
   }
 
@@ -2689,6 +2777,7 @@ export class Game {
     this.shake += 1.0;
     this.spawnRing(at, 0xff9a2a, 8, 0.5);
     this.spawnRing(at, 0xfff2c8, 4.5, 0.3);
+    this.fireEventLight(at.x, at.y + 1.4, at.z, 0xff9a2a, 320, 0.4);
     this.burst(at, 0xff9a2a, 22, 8);
     this.burst(at, 0x666666, 12, 4.5);
     this.spawnDecal(this.v3.set(at.x, 0.02, at.z), this.v2.set(0, 1, 0), 0x100c08, 2.6, 14);
@@ -2924,6 +3013,7 @@ export class Game {
     hud.set({ nukeId: hud.get().nukeId + 1 });
     sfx.nuke();
     this.shake += 1.4;
+    this.fireEventLight(this.pos.x, 3, this.pos.z, 0xfff2c8, 520, 0.9);
     this.spawnRing(this.pos, 0xfff2c8, 22, 0.9);
     this.spawnRing(this.pos, 0xff9a2a, 14, 0.6);
     this.burst(this.v1.set(this.pos.x, 2, this.pos.z), 0xfff2c8, 30, 9);
@@ -3156,6 +3246,7 @@ export class Game {
       this.updateParticles(dt);
       this.updateFX(dt);
       this.updateAmbient(dt);
+      this.updateLights(dt);
     } else if (this.state === "playing") {
       this.updatePlayer(dt);
       this.updateEnemies(dt);
@@ -3169,6 +3260,7 @@ export class Game {
       this.updateTexts(dt);
       this.updateFX(dt);
       this.updateAmbient(dt);
+      this.updateLights(dt);
       this.updateCombo(dt);
       this.updateViewmodel(dt);
       this.drawRadar();
