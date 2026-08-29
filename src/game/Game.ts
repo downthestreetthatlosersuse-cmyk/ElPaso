@@ -223,11 +223,9 @@ export class Game {
   private flashT = 0;
   private switchT = 0;
   private dryT = 0;
-  /* recoil springs */
-  private kickP = 0;
-  private kickPV = 0;
-  private kickR = 0;
-  private kickRV = 0;
+  /* recoil: one decaying impulse — quick vertical punch, fast settle, no wobble, no camera roll */
+  private recoilKick = 0;
+  private gunRoll = 0;
   private rollSign = 1;
   /* combo */
   private comboCount = 0;
@@ -2451,14 +2449,12 @@ export class Game {
     else fg.scale.setScalar(fs);
     this.gunLight.intensity = this.weaponIdx === 1 ? 42 : 26;
     this.shake += w.kick;
-    /* recoil springs: sustained SMG fire climbs, heavies punch + roll */
-    this.kickPV += w.pitchKick * rand(0.85, 1.15);
+    /* recoil: one decaying impulse. Clamped so sustained fire never climbs your aim. */
+    this.recoilKick = Math.min(this.recoilKick + w.pitchKick * 0.2, 3);
     if (w.rollKick >= 2) {
       this.rollSign *= -1;
-      this.kickRV += w.rollKick * this.rollSign * rand(0.8, 1.2);
+      this.gunRoll = w.rollKick * 0.03 * this.rollSign;
       this.shake += w.kind === "rocket" ? 0.2 : 0.12;
-    } else {
-      this.kickRV += w.rollKick * rand(-1, 1);
     }
     w.sound();
     if (w.kind !== "rocket") this.casing();
@@ -2699,11 +2695,9 @@ export class Game {
     const bobAmp = this.onGround ? Math.min(horiz / 6, 1) : 0;
     const eyeY = 1.7 + Math.sin(this.bobT * 2) * 0.05 * bobAmp;
 
-    /* recoil springs */
-    this.kickPV += (-110 * this.kickP - 13 * this.kickPV) * dt;
-    this.kickP = Math.max(-0.12, Math.min(0.34, this.kickP + this.kickPV * dt));
-    this.kickRV += (-90 * this.kickR - 11 * this.kickRV) * dt;
-    this.kickR += this.kickRV * dt;
+    /* recoil: fast exponential settle — a punch that always returns to center */
+    this.recoilKick *= Math.exp(-dt * 14);
+    this.gunRoll *= Math.exp(-dt * 11);
 
     /* fov: sprint stretch + fire punch, springy */
     this.fovKick *= Math.pow(0.0008, dt);
@@ -2730,9 +2724,9 @@ export class Game {
       this.pos.z + rand(-sh, sh)
     );
     this.camera.rotation.set(
-      this.pitch + this.kickP + breathe * 0.25 + rand(-sh, sh) * 0.4,
+      this.pitch + this.recoilKick * 0.022 + breathe * 0.25 + rand(-sh, sh) * 0.4,
       this.yaw,
-      this.kickR * 0.06 + rand(-sh, sh) * 0.3
+      rand(-sh, sh) * 0.3
     );
 
     /* weapon timers */
@@ -2754,9 +2748,9 @@ export class Game {
     const horiz = Math.hypot(this.vel.x, this.vel.z);
     const bob = Math.sin(this.bobT * 2) * Math.min(horiz / 6, 1);
     let y = -0.0 + bob * 0.02;
-    let rotZ = Math.sin(this.bobT) * Math.min(horiz / 6, 1) * 0.03 + this.kickR * 0.02;
-    let rotX = this.recoil * (this.weaponIdx === 1 ? 0.22 : 0.09) + Math.max(0, this.kickP) * 1.6;
-    let z = -this.recoil * 0.08 - Math.max(0, this.kickP) * 0.38;
+    let rotZ = Math.sin(this.bobT) * Math.min(horiz / 6, 1) * 0.03 + this.gunRoll;
+    let rotX = this.recoil * (this.weaponIdx === 1 ? 0.22 : 0.09) + this.recoilKick * 0.06;
+    let z = -this.recoil * 0.08 - this.recoilKick * 0.12;
     if (this.reloading) {
       const w = WEAPONS[this.weaponIdx];
       const t = 1 - this.reloadT / w.reloadTime;
@@ -2767,7 +2761,7 @@ export class Game {
     if (this.switchT > 0) {
       y -= this.switchT * 1.2;
     }
-    gun.position.set(this.kickR * -0.012, y, 0);
+    gun.position.set(this.gunRoll * 0.02, y, 0);
     gun.rotation.set(rotX, 0, rotZ);
     for (const gmodel of this.guns) {
       gmodel.position.z = -0.78 + z;
@@ -3368,10 +3362,8 @@ export class Game {
     }
     this.comboCount = 0;
     this.comboT = 0;
-    this.kickP = 0;
-    this.kickPV = 0;
-    this.kickR = 0;
-    this.kickRV = 0;
+    this.recoilKick = 0;
+    this.gunRoll = 0;
     this.pos.set(0, 0, 16);
     this.vel.set(0, 0, 0);
     this.yaw = 0;
