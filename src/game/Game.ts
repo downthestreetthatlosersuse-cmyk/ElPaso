@@ -2729,10 +2729,34 @@ export class Game {
             const headY = e.kind === "brute" || e.kind === "boss" ? 1.95 : 1.5;
             const isHead = h.point.y > e.group.position.y + headY * e.groupBase;
             this.damageEnemy(e, (isHead ? 1.8 : 1) * dmg * falloffs[used], h.point, isHead, i);
+            /* RATTLER X: emerald energy bolts chain along the pierce line */
+            if (i === 0 && upg) {
+              const exit = h.point.clone();
+              exit.y += 0.15;
+              if (last) {
+                const entry = last.point.clone();
+                entry.y += 0.15;
+                this.fireTracer(entry, exit, 1.1, 0x8dff3a, 0.1);
+              }
+              this.burst(exit, 0x8dff3a, 7, 3.6);
+              this.miniFireball(exit, 0.55, 0.15);
+              if (used >= 1) this.showText(exit.x, exit.y + 0.7, exit.z, `PIERCE ×${used + 1}`, "#8dff3a");
+            }
             /* PUMPER-X SAURIO: acid shells stack a melt-over-time */
             if (i === 2 && upg) {
               e.acidT = 3;
               e.acidStacks = Math.min(3, e.acidStacks + 1);
+              this.burst(h.point, 0xb4ff3c, 8, 3.4);
+              this.miniFireball(h.point, 0.6, 0.18);
+              this.spawnDecal(
+                this.v3.set(e.group.position.x, 0.02, e.group.position.z),
+                this.v2.set(0, 1, 0),
+                0x6fae1e,
+                rand(0.9, 1.4),
+                3.2
+              );
+              this.showText(h.point.x, h.point.y + 0.5, h.point.z, `ACID ×${e.acidStacks}`, "#b4ff3c");
+              sfx.splat();
             }
             last = h;
             used++;
@@ -2769,8 +2793,11 @@ export class Game {
   /* EL JUEZ void singularity */
   private spawnWell(pos: THREE.Vector3) {
     this.wells.push({ pos: pos.clone(), t: 0.7, dur: 0.7 });
-    this.spawnRing(pos, 0xc05aff, 4.5, 0.7);
-    this.fireEventLight(pos.x, pos.y + 0.5, pos.z, 0xc05aff, 120, 0.5);
+    this.spawnRing(pos, 0xc05aff, 5.5, 0.7);
+    this.spawnRing(pos, 0xffffff, 2.6, 0.3);
+    this.miniFireball(pos, 1.3, 0.3);
+    this.fireEventLight(pos.x, pos.y + 0.5, pos.z, 0xc05aff, 200, 0.55);
+    this.burst(pos, 0xc05aff, 12, 4.5);
     sfx.well();
   }
 
@@ -2779,7 +2806,13 @@ export class Game {
       const wl = this.wells[wi];
       wl.t -= dt;
       if (wl.t <= 0) {
+        /* the singularity collapses — implosion flash */
         this.wells.splice(wi, 1);
+        this.miniFireball(wl.pos, 2.1, 0.24);
+        this.spawnRing(wl.pos, 0xc05aff, 4, 0.35);
+        this.burst(wl.pos, 0xe8c8ff, 10, 5.5);
+        this.fireEventLight(wl.pos.x, wl.pos.y + 0.6, wl.pos.z, 0xc05aff, 160, 0.3);
+        sfx.well();
         continue;
       }
       const strength = 10 * (wl.t / wl.dur);
@@ -2794,6 +2827,30 @@ export class Game {
           gp.z += (dz / d) * strength * dt;
         }
       }
+      /* vortex: matter spirals inward */
+      for (let s = 0; s < 2; s++) {
+        const p = this.particles[this.pIndex];
+        this.pIndex = (this.pIndex + 1) % this.particles.length;
+        const a = rand(0, Math.PI * 2);
+        const r = rand(2.4, 4.2);
+        p.active = true;
+        p.pos.set(wl.pos.x + Math.cos(a) * r, rand(0.2, 2.2), wl.pos.z + Math.sin(a) * r);
+        const ix = wl.pos.x - p.pos.x;
+        const iz = wl.pos.z - p.pos.z;
+        const il = Math.hypot(ix, iz) || 1;
+        p.vel.set((ix / il) * rand(3.5, 6) - (iz / il) * 2.4, rand(-0.4, 0.8), (iz / il) * rand(3.5, 6) + (ix / il) * 2.4);
+        p.maxLife = p.life = rand(0.3, 0.55);
+        p.size = rand(0.4, 0.8);
+        p.color.set(Math.random() > 0.5 ? 0xc05aff : 0xe8c8ff);
+        p.grav = 0;
+      }
+      /* violet arcs lash from the rim into the core */
+      if (Math.random() < 0.5) {
+        const a = rand(0, Math.PI * 2);
+        const from = this.v1.set(wl.pos.x + Math.cos(a) * 3.2, rand(0.3, 2), wl.pos.z + Math.sin(a) * 3.2);
+        const to = this.v3.set(wl.pos.x + rand(-0.2, 0.2), rand(0.4, 1), wl.pos.z + rand(-0.2, 0.2));
+        this.fireTracer(from.clone(), to.clone(), 0.8, 0xd88aff, 0.06);
+      }
     }
   }
 
@@ -2806,12 +2863,15 @@ export class Game {
       this.clusters.splice(ci, 1);
       const p = c.pos;
       sfx.boom();
-      this.shake += 0.35;
-      this.miniFireball(p, 1.9, 0.3);
-      this.spawnRing(p, 0xffd2a0, 6, 0.4);
-      this.fireEventLight(p.x, p.y + 1, p.z, 0xffa030, 150, 0.3);
-      this.burst(p, 0xffc040, 10, 6);
-      this.spawnDecal(this.v3.set(p.x, 0.02, p.z), this.v2.set(0, 1, 0), 0x100c08, 1.6, 11);
+      sfx.crack();
+      this.shake += 0.4;
+      this.miniFireball(p, 2.3, 0.32);
+      this.spawnRing(p, 0xffd2a0, 6.5, 0.4);
+      this.spawnRing(p, 0xffc040, 3.6, 0.28);
+      this.fireEventLight(p.x, p.y + 1, p.z, 0xffc040, 220, 0.35);
+      this.burst(p, 0xffc040, 14, 7.5);
+      this.burst(this.v1.set(p.x, p.y + 0.4, p.z), 0x3a3632, 6, 2.2, 1.4);
+      this.spawnDecal(this.v3.set(p.x, 0.02, p.z), this.v2.set(0, 1, 0), 0x100c08, 1.8, 11);
       for (const e of [...this.enemies]) {
         if (e.dying) continue;
         const ep = e.group.position;
@@ -2868,8 +2928,16 @@ export class Game {
     sfx.evolve();
     hud.banner(`${UPG_NAMES[i]} ONLINE`, UPG_QUIRK[i]);
     hud.feed(`${UPG_NAMES[i]} FUSED WITH ALIEN TECH`, "#c05aff");
-    this.burst(this.v1.set(this.pos.x, 1.6, this.pos.z), UPG_TINT[i], 20, 4);
-    this.fireEventLight(this.pos.x, 2, this.pos.z, UPG_TINT[i], 160, 0.5);
+    /* fusion moment: pillar of alien light, shockwave, a beat of slow-mo */
+    const beam = this.spawnBeam(this.v1.set(this.pos.x, 0, this.pos.z), UPG_TINT[i]);
+    beam.mesh.scale.set(1.7, 1, 1.7);
+    this.spawnRing(this.pos, UPG_TINT[i], 7, 0.55);
+    this.spawnRing(this.pos, 0xffffff, 3.5, 0.35);
+    this.burst(this.v1.set(this.pos.x, 1.6, this.pos.z), UPG_TINT[i], 26, 5);
+    this.fireEventLight(this.pos.x, 2, this.pos.z, UPG_TINT[i], 260, 0.6);
+    this.freeze = Math.max(this.freeze, 0.13);
+    this.fovKick += 2.2;
+    this.shake += 0.45;
     this.hudSync();
   }
 
@@ -3146,7 +3214,10 @@ export class Game {
           e.acidTick = 0.4;
           const gp2 = e.group.position;
           this.damageEnemy(e, 2.5 * e.acidStacks, this.v1.set(gp2.x, 1.1, gp2.z), false);
-          this.burst(this.v1.set(gp2.x, 1.3, gp2.z), 0xb4ff3c, 4, 2.2);
+          this.burst(this.v1.set(gp2.x, 1.3, gp2.z), 0xb4ff3c, 7, 2.6);
+          /* corrosive smoke curls off the target */
+          this.burst(this.v1.set(gp2.x, 1.0, gp2.z), 0x7a9a3a, 4, 1.3, 1.2);
+          if (Math.random() < 0.55) sfx.splat();
         }
         if (e.acidT <= 0) e.acidStacks = 0;
       }
@@ -3443,16 +3514,20 @@ export class Game {
     const pd = Math.hypot(this.pos.x - at.x, this.pos.z - at.z);
     if (pd < R) this.damagePlayer(Math.round(22 * (1 - pd / R)), "BOOMSTICK BACKBLAST");
     this.fovKick += 2.2;
-    /* BOOMSTICK PRIME: cluster warheads split into 3 delayed submunitions */
+    /* BOOMSTICK PRIME: cluster warheads visibly split into 3 arcing darts */
     if (this.upgraded[3]) {
       for (let c = 0; c < 3; c++) {
         const a = rand(0, Math.PI * 2);
         const rr = rand(2.2, 3.9);
-        this.clusters.push({
-          pos: new THREE.Vector3(at.x + Math.cos(a) * rr, Math.max(0.2, at.y), at.z + Math.sin(a) * rr),
-          t: 0.12 + c * 0.11,
-        });
+        const sub = new THREE.Vector3(at.x + Math.cos(a) * rr, Math.max(0.2, at.y), at.z + Math.sin(a) * rr);
+        const delay = 0.12 + c * 0.11;
+        this.clusters.push({ pos: sub, t: delay });
+        /* glowing dart streaks out to the submunition point, detonating on arrival */
+        const arc = at.clone();
+        arc.y += 1.6;
+        this.fireTracer(arc, sub, 2.2, 0xffc040, delay);
       }
+      this.burst(at, 0xffc040, 10, 6);
     }
   }
 
