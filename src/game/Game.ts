@@ -4094,6 +4094,7 @@ export class Game {
       bossName: boss ? "EL JEFE" : "",
       health: Math.round(this.health),
       mag: this.mags[this.weaponIdx],
+      magSize: this.effMag(this.weaponIdx),
       reserve: this.reserves[this.weaponIdx],
       weapon: this.upgraded[this.weaponIdx] ? UPG_NAMES[this.weaponIdx] : WEAPONS[this.weaponIdx].name,
       weaponSlot: this.weaponIdx,

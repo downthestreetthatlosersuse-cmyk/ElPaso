@@ -23,6 +23,7 @@ export interface Hud {
   state: GameState;
   health: number;
   mag: number;
+  magSize: number;
   reserve: number;
   weapon: string;
   weaponSlot: number;
@@ -61,6 +62,7 @@ let s: Hud = {
   state: "menu",
   health: 100,
   mag: 32,
+  magSize: 32,
   reserve: 160,
   weapon: "RATTLER SMG",
   weaponSlot: 0,

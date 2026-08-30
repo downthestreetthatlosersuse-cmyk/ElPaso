@@ -90,6 +90,78 @@
     inset 0 0 14px rgba(242, 139, 29, 0.12);
 }
 
+/* ---------- tactical HUD chrome ---------- */
+.tac {
+  position: relative;
+  background: linear-gradient(180deg, rgba(26, 12, 34, 0.9), rgba(11, 5, 18, 0.92));
+  box-shadow:
+    0 0 0 2px #0c0514,
+    0 6px 22px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+.tac::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.22) 0px,
+    rgba(0, 0, 0, 0.22) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+/* corner brackets */
+.brk {
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  pointer-events: none;
+  z-index: 2;
+}
+.brk-tl { top: 3px; left: 3px; border-top: 2px solid; border-left: 2px solid; }
+.brk-tr { top: 3px; right: 3px; border-top: 2px solid; border-right: 2px solid; }
+.brk-bl { bottom: 3px; left: 3px; border-bottom: 2px solid; border-left: 2px solid; }
+.brk-br { bottom: 3px; right: 3px; border-bottom: 2px solid; border-right: 2px solid; }
+/* diagonal accent stripe */
+.tac-stripe {
+  position: absolute;
+  top: 0;
+  height: 3px;
+  width: 70px;
+  transform: skewX(-24deg);
+  z-index: 2;
+}
+/* skewed bar segment */
+.seg {
+  transform: skewX(-16deg);
+  height: 100%;
+}
+/* ammo bullet pip */
+.pip {
+  width: 5px;
+  transform: skewX(-16deg);
+}
+/* health ghost trail (delayed red bar behind the live bar) */
+.ghost-bar {
+  transition: width 0.7s cubic-bezier(0.2, 0.8, 0.3, 1) 0.25s;
+}
+.live-bar {
+  transition: width 0.12s ease-out;
+}
+/* big glowing readout */
+.glow-num {
+  text-shadow:
+    0 0 12px currentColor,
+    0 2px 0 rgba(0, 0, 0, 0.8);
+}
+@keyframes critpulse {
+  0%, 100% { box-shadow: 0 0 0 2px #0c0514, 0 0 22px rgba(255, 59, 48, 0.55); }
+  50% { box-shadow: 0 0 0 2px #0c0514, 0 0 6px rgba(255, 59, 48, 0.15); }
+}
+.crit { animation: critpulse 0.9s ease-in-out infinite; }
+
 .title-chrome {
   color: var(--hud-gold);
   text-shadow:

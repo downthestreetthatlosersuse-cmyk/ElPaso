@@ -34,62 +34,130 @@ function InGameHud({ h }: { h: Hud }) {
 
       <Crosshair h={h} />
 
-      {/* bottom bar — vitals + ammunition, nothing else */}
-      <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between gap-3 pointer-events-none">
-        <div className={`hud-panel px-3 py-2 ${h.health <= 30 ? "animate-pulse" : ""}`} style={{ borderColor: hpColor }}>
-          <div className="flex items-baseline gap-2">
-            <span className="font-display text-[11px] tracking-[0.2em]" style={{ color: hpColor }}>VITALS</span>
-            <span className="font-crt text-4xl leading-none" style={{ color: hpColor }}>{h.health}</span>
-          </div>
-          <div className="flex gap-[3px] mt-1.5">
-            {Array.from({ length: 20 }, (_, s) => (
-              <span
-                key={s}
-                className="h-4 flex-1 min-w-[7px]"
-                style={{
-                  backgroundColor: s < Math.ceil(h.health / 5) ? hpColor : "rgba(20,10,28,0.9)",
-                  boxShadow: s < Math.ceil(h.health / 5) ? `0 0 6px ${hpColor}66` : "none",
-                }}
-              />
-            ))}
-          </div>
-        </div>
-
-        <div className="hud-panel px-4 py-2 text-right">
-          <div className="flex items-center justify-end gap-1.5">
-            {["SMG", "MAG", "SHT", "RKTL"].map((label, i) => (
-              <span
-                key={label}
-                className={`font-crt text-base px-1.5 border ${
-                  h.upgrades[i]
-                    ? "border-[#c05aff] text-[#e0b0ff] bg-[rgba(192,90,255,0.16)] neon-flicker"
-                    : h.weaponSlot === i
-                      ? "border-[#8dff3a] text-[#8dff3a] bg-[rgba(141,255,58,0.12)]"
-                      : "border-[#5a3a78] text-[#8a78a8]"
-                }`}
-                title={`Slot ${i + 1}: ${h.upgrades[i] ? UPG_NAMES[i] : label}`}
-              >
-                {i + 1} {h.upgrades[i] ? UPG_SHORT[i] : label}
-              </span>
-            ))}
-          </div>
-          <div className={`font-display text-sm mt-1 ${h.upgrades[h.weaponSlot] ? "text-[#e0b0ff]" : "text-[#8dff3a]"}`}>{h.weapon}</div>
-          <div className="leading-none mt-1">
-            <span className="font-crt text-7xl" style={{ color: h.mag === 0 ? "#ff3b30" : "#ffd23f" }}>
-              {h.mag}
-            </span>
-            <span className="font-crt text-3xl text-[#f28b1d]"> / {h.reserve}</span>
-          </div>
-          {h.reloading ? (
-            <div className="blinker font-crt text-xl text-[#ff5a5a] leading-none mt-1">RELOADING…</div>
-          ) : h.mag === 0 && h.reserve === 0 ? (
-            <div className="blinker font-crt text-xl text-[#ff5a5a] leading-none mt-1">OUT OF AMMO — FIND A CACHE</div>
-          ) : h.mag === 0 ? (
-            <div className="blinker font-crt text-xl text-[#ff5a5a] leading-none mt-1">PRESS R</div>
-          ) : null}
-        </div>
+      {/* bottom bar — vitals + ammunition */}
+      <div className="absolute bottom-4 left-4 right-4 flex items-end justify-between gap-4 pointer-events-none">
+        <HealthPanel h={h} hpColor={hpColor} />
+        <AmmoPanel h={h} />
       </div>
     </>
+  );
+}
+
+function Corners({ color }: { color: string }) {
+  return (
+    <>
+      <span className="brk brk-tl" style={{ borderColor: color }} />
+      <span className="brk brk-tr" style={{ borderColor: color }} />
+      <span className="brk brk-bl" style={{ borderColor: color }} />
+      <span className="brk brk-br" style={{ borderColor: color }} />
+    </>
+  );
+}
+
+function HealthPanel({ h, hpColor }: { h: Hud; hpColor: string }) {
+  const hp = Math.max(0, h.health);
+  return (
+    <div
+      className={`tac px-4 pb-3 pt-2.5 w-[240px] ${hp <= 30 ? "crit" : ""}`}
+      style={{ border: `1px solid ${hpColor}`, boxShadow: `0 0 0 2px #0c0514, 0 0 18px ${hpColor}33` }}
+    >
+      <Corners color={hpColor} />
+      <div className="tac-stripe left-6" style={{ background: hpColor }} />
+      <div className="flex items-end justify-between relative z-[1]">
+        <div className="flex items-center gap-1.5 pb-1">
+          <svg width="14" height="14" viewBox="0 0 14 14">
+            <path d="M5 1h4v4h4v4H9v4H5V9H1V5h4z" fill={hpColor} />
+          </svg>
+          <span className="font-display text-[10px] tracking-[0.28em]" style={{ color: hpColor }}>
+            VITALS
+          </span>
+        </div>
+        <span className="font-crt text-5xl leading-none glow-num" style={{ color: hpColor }}>
+          {hp}
+        </span>
+      </div>
+      {/* segmented bar with damage ghost trail */}
+      <div className="relative h-4 mt-1 overflow-hidden bg-[rgba(8,4,14,0.9)]" style={{ transform: "skewX(-16deg)" }}>
+        <div className="ghost-bar absolute inset-y-0 left-0" style={{ width: `${hp}%`, background: "rgba(255,90,70,0.85)" }} />
+        <div
+          className="live-bar absolute inset-y-0 left-0"
+          style={{ width: `${hp}%`, background: hpColor, boxShadow: `0 0 10px ${hpColor}88` }}
+        />
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "repeating-linear-gradient(90deg, transparent 0, transparent calc(5% - 2px), rgba(8,4,14,0.95) calc(5% - 2px), rgba(8,4,14,0.95) 5%)",
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function AmmoPanel({ h }: { h: Hud }) {
+  const gold = "#ffd23f";
+  const empty = h.mag === 0;
+  const magPct = h.magSize > 0 ? (h.mag / h.magSize) * 100 : 0;
+  return (
+    <div className="tac px-4 pb-3 pt-2.5 w-[280px] text-right" style={{ border: `1px solid ${gold}`, boxShadow: `0 0 0 2px #0c0514, 0 0 18px ${gold}2e` }}>
+      <Corners color={gold} />
+      <div className="tac-stripe right-6" style={{ background: gold }} />
+      {/* weapon slots */}
+      <div className="flex items-center justify-end gap-1 relative z-[1]">
+        {["SMG", "MAG", "SHT", "RKTL"].map((label, i) => (
+          <span
+            key={label}
+            className={`font-crt text-sm leading-none px-1.5 py-0.5 border ${
+              h.upgrades[i]
+                ? "border-[#c05aff] text-[#e0b0ff] bg-[rgba(192,90,255,0.16)] neon-flicker"
+                : h.weaponSlot === i
+                  ? "border-[#8dff3a] text-[#8dff3a] bg-[rgba(141,255,58,0.12)]"
+                  : "border-[#5a3a78] text-[#8a78a8]"
+            }`}
+            title={`Slot ${i + 1}: ${h.upgrades[i] ? UPG_NAMES[i] : label}`}
+          >
+            {i + 1} {h.upgrades[i] ? UPG_SHORT[i] : label}
+          </span>
+        ))}
+      </div>
+      <div className="flex items-end justify-end gap-2 relative z-[1]">
+        <span className={`font-display text-[11px] tracking-[0.14em] pb-1 ${h.upgrades[h.weaponSlot] ? "text-[#e0b0ff]" : "text-[#8dff3a]"}`}>
+          {h.weapon}
+        </span>
+        <span className="font-crt text-5xl leading-none glow-num" style={{ color: empty ? "#ff3b30" : gold }}>
+          {h.mag}
+        </span>
+        <span className="font-crt text-xl text-[#f28b1d] pb-0.5">/ {h.reserve}</span>
+      </div>
+      {/* mag fill bar */}
+      <div className="relative h-2.5 mt-1.5 overflow-hidden bg-[rgba(8,4,14,0.9)]" style={{ transform: "skewX(-16deg)" }}>
+        <div
+          className="live-bar absolute inset-y-0 right-0"
+          style={{
+            width: `${magPct}%`,
+            background: empty ? "#ff3b30" : gold,
+            boxShadow: `0 0 8px ${empty ? "#ff3b30" : gold}77`,
+          }}
+        />
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "repeating-linear-gradient(90deg, transparent 0, transparent calc(12.5% - 2px), rgba(8,4,14,0.95) calc(12.5% - 2px), rgba(8,4,14,0.95) 12.5%)",
+          }}
+        />
+      </div>
+      <div className="relative z-[1] h-5 mt-1">
+        {h.reloading ? (
+          <div className="blinker font-crt text-lg text-[#ff5a5a] leading-none">RELOADING…</div>
+        ) : empty && h.reserve === 0 ? (
+          <div className="blinker font-crt text-lg text-[#ff5a5a] leading-none">OUT OF AMMO</div>
+        ) : empty ? (
+          <div className="blinker font-crt text-lg text-[#ff5a5a] leading-none">PRESS R</div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
