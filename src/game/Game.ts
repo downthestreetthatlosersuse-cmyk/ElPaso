@@ -177,6 +177,10 @@ interface Tracer {
   mesh: THREE.Mesh;
   mat: THREE.MeshBasicMaterial;
   life: number;
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  t: number;
+  dur: number;
 }
 
 interface FloatText {
@@ -1591,11 +1595,19 @@ export class Game {
     /* tracers */
     for (let i = 0; i < 16; i++) {
       const mat = new THREE.MeshBasicMaterial({ color: 0xffe2a8, transparent: true, opacity: 0 });
-      const m = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.035, 1), mat);
+      const m = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.045, 1), mat);
       m.visible = false;
       m.layers.set(2);
       this.scene.add(m);
-      this.tracers.push({ mesh: m, mat, life: 0 });
+      this.tracers.push({
+        mesh: m,
+        mat,
+        life: 0,
+        from: new THREE.Vector3(),
+        to: new THREE.Vector3(),
+        t: 1,
+        dur: 0.07,
+      });
     }
 
     /* floating text */
@@ -2194,18 +2206,22 @@ export class Game {
     t.life = 1;
   }
 
-  private fireTracer(from: THREE.Vector3, to: THREE.Vector3, thick = 1, color = 0xffe2a8, life = 0.07) {
+  private fireTracer(from: THREE.Vector3, to: THREE.Vector3, thick = 1, color = 0xffe2a8, dur = 0.07) {
     let tr = this.tracers.find((t) => t.life <= 0);
     if (!tr) tr = this.tracers[0];
-    const mid = this.v2.copy(from).add(to).multiplyScalar(0.5);
-    tr.mesh.position.copy(mid);
+    tr.from.copy(from);
+    tr.to.copy(to);
+    tr.t = 0;
+    tr.dur = dur;
+    /* short bullet streak, not a laser line — length scales with round weight */
+    const len = 0.45 + thick * 0.45;
+    tr.mesh.scale.set(thick * 0.8 + 0.2, thick * 0.8 + 0.2, len);
+    tr.mesh.position.copy(from);
     tr.mesh.lookAt(to);
-    tr.mesh.scale.set(thick, thick, Math.max(0.5, from.distanceTo(to)));
     tr.mesh.visible = true;
     tr.mat.color.set(color);
-    tr.mat.opacity = 0.9;
-    tr.life = life;
-    tr.mesh.userData.maxLife = life;
+    tr.mat.opacity = 0.95;
+    tr.life = dur;
   }
 
   private muzzleSmoke(count: number) {
@@ -3572,12 +3588,22 @@ export class Game {
 
   private updateTracers(dt: number) {
     for (const t of this.tracers) {
-      if (t.life > 0) {
-        t.life -= dt;
-        const max = (t.mesh.userData.maxLife as number) || 0.07;
-        t.mat.opacity = Math.max(0, (t.life / max) * 0.9);
-        if (t.life <= 0) t.mesh.visible = false;
+      if (t.life <= 0) continue;
+      t.life -= dt;
+      t.t += dt / t.dur;
+      if (t.t >= 1 || t.life <= 0) {
+        t.mesh.visible = false;
+        t.life = 0;
+        continue;
       }
+      /* streak head flies muzzle → impact; body trails behind it */
+      const k = t.t;
+      this.v2.subVectors(t.to, t.from);
+      const dist = this.v2.length() || 1;
+      this.v2.divideScalar(dist);
+      this.v1.lerpVectors(t.from, t.to, k).addScaledVector(this.v2, -t.mesh.scale.z * 0.5);
+      t.mesh.position.copy(this.v1);
+      t.mat.opacity = k < 0.7 ? 0.95 : 0.95 * (1 - (k - 0.7) / 0.3);
     }
   }
 
