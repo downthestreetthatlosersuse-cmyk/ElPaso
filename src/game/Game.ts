@@ -46,14 +46,7 @@ const ENEMY_DEFS: Record<
   boss: { hp: 720, speed: 2.5, dmg: 30, score: 1500, radius: 1.9 },
 };
 
-const STREAKS: [number, string][] = [
-  [2, "DOUBLE KILL"],
-  [3, "TRIPLE KILL"],
-  [4, "MEGA KILL"],
-  [5, "KILLING SPREE"],
-  [7, "RAMPAGE"],
-  [10, "UNSTOPPABLE"],
-];
+
 
 /* fixed projectile speeds (m/s) — tracers and impacts obey real time of flight */
 const TRACER_SPEED = [270, 180, 215, 48];
@@ -76,22 +69,7 @@ const TRAIL_CFG = [
   { color: 0xb4ff3c, core: 0xe0ffc0, w: 0.08, cw: 0.03, len: 1.1 },
 ];
 
-const WAVE_LINES = [
-  "COME GET SOME!",
-  "THIS ONE'S FOR EL PASO!",
-  "Y'ALL WANT SOME? HUH?!",
-  "TIME TO KICK ALIEN AND CHEW BUBBLEGUM.",
-  "WELCOME TO THE BORDER, UGLIES.",
-  "SUNSET'S COME. SO HAVE YOU. TOO BAD.",
-  "MY CITY. MY RULES. MY GUNS.",
-];
 
-const KILL_LINES: Record<EnemyKind, string[]> = {
-  grunt: ["ALIEN SCUM SPLATTERED", "GREEN GOO EVERYWHERE", "ONE LESS VERDE", "SPLAT. NEXT."],
-  spitter: ["SPITTER SPIT HIS LAST", "MOUTH SHUT FOR GOOD", "ACID REFUND ISSUED"],
-  brute: ["BRUTE DROPPED", "BIG UGLY, BIG MESS", "THAT ONE'S GONNA STAIN"],
-  boss: ["EL JEFE IS DOWN. THE PLAZA IS OURS.", "KING OF THE HORDE? NOT ANYMORE."],
-};
 
 interface AABB {
   minX: number;
@@ -214,16 +192,9 @@ interface Tracer {
   dur: number;
 }
 
-interface FloatText {
-  sprite: THREE.Sprite;
-  mat: THREE.SpriteMaterial;
-  tex: THREE.CanvasTexture;
-  canvas: HTMLCanvasElement;
-  life: number;
-}
+
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
-const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
 
 export class Game {
   private container: HTMLElement;
@@ -262,9 +233,6 @@ export class Game {
   /* time-of-flight: impacts apply when the bullet arrives, not on trigger pull */
   private gameT = 0;
   private pending: { at: number; fn: () => void }[] = [];
-  /* killstreak */
-  private streakCount = 0;
-  private streakT = 0;
   /* rockets */
   private rockets: { g: THREE.Group; vel: THREE.Vector3; active: boolean; life: number; spin: number; gold: boolean }[] = [];
   /* feel: fov punch, hitstop, footsteps */
@@ -330,7 +298,6 @@ export class Game {
   private projectiles: Projectile[] = [];
   private pickups: Pickup[] = [];
   private tracers: Tracer[] = [];
-  private texts: FloatText[] = [];
   private particles: Particle[] = [];
   private pMesh!: THREE.InstancedMesh;
   private pIndex = 0;
@@ -1688,20 +1655,6 @@ export class Game {
       });
     }
 
-    /* floating text */
-    for (let i = 0; i < 10; i++) {
-      const canvas = document.createElement("canvas");
-      canvas.width = 256;
-      canvas.height = 96;
-      const tex = new THREE.CanvasTexture(canvas);
-      const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, opacity: 0 });
-      const sprite = new THREE.Sprite(mat);
-      sprite.scale.set(2.4, 0.9, 1);
-      sprite.visible = false;
-      this.scene.add(sprite);
-      this.texts.push({ sprite, mat, tex, canvas, life: 0 });
-    }
-
     /* impact / splat decals */
     const decalGeo = new THREE.PlaneGeometry(1, 1);
     for (let i = 0; i < 44; i++) {
@@ -2091,7 +2044,7 @@ export class Game {
     const a = rand(0, Math.PI * 2);
     const e = this.buildEnemy("boss", Math.cos(a) * 44, -78 + Math.sin(a) * 6);
     e.hp = Math.round(ENEMY_DEFS.boss.hp * (1 + this.wave * 0.04));
-    hud.banner("EL JEFE HAS ARRIVED", "BRING THE BOOMSTICK, TEX.");
+    hud.banner("EL JEFE HAS ARRIVED");
     sfx.boss();
     const p = e.group.position;
     this.spawnRing(p, 0xc05aff, 9, 0.7);
@@ -2182,22 +2135,10 @@ export class Game {
       const sc = e.scoreV * mult;
       const score = hud.get().score + sc;
       const kills = hud.get().kills + 1;
-      hud.set({ score, kills, combo: this.comboCount });
-      this.showText(p.x, 2.2, p.z, `+${sc}`, mult > 1 ? "#ff9a2a" : e.kind === "brute" ? "#ffd23f" : "#8dff3a");
-      if (mult >= 2) this.showText(p.x, 3.1, p.z, `COMBO x${mult}`, "#ff9a2a");
-      hud.feed(`${pick(KILL_LINES[e.kind])}  +${sc}`, "#8dff3a");
+      hud.set({ score, kills });
       if (Math.random() < 0.3) this.dropPickup(p.x, p.z);
-      /* killstreak */
-      if (this.streakT > 0) this.streakCount++;
-      else this.streakCount = 1;
-      this.streakT = 2.4;
-      const found = STREAKS.find(([n]) => n === this.streakCount);
-      if (found) {
-        hud.banner(found[1], this.streakCount >= 5 ? "THE HORDE FEELS IT" : "");
-        sfx.fanfare();
-      }
       if (e.boss) {
-        hud.banner("EL JEFE IS DOWN", "THE PLAZA STANDS. FOR NOW.");
+        hud.banner("EL JEFE IS DOWN");
         sfx.fanfare();
         this.spawnRing(p, 0xffd23f, 12, 0.8);
         this.spawnRing(p, 0xc05aff, 8, 0.6);
@@ -2221,7 +2162,6 @@ export class Game {
     e.flashT = 0.07;
     if (isHead) {
       sfx.headshot();
-      this.showText(point.x, point.y + 0.45, point.z, "HEADSHOT", "#ffd23f");
       this.burst(point, 0xffc840, 9, 4.5);
     } else {
       sfx.squish();
@@ -2286,26 +2226,6 @@ export class Game {
       p.grav = grav;
       p.grow = grow;
     }
-  }
-
-  private showText(x: number, y: number, z: number, text: string, color: string) {
-    let t = this.texts.find((t) => t.life <= 0);
-    if (!t) t = this.texts[0];
-    const g = t.canvas.getContext("2d")!;
-    g.clearRect(0, 0, 256, 96);
-    g.font = "bold 62px VT323, monospace";
-    g.textAlign = "center";
-    g.textBaseline = "middle";
-    g.lineWidth = 10;
-    g.strokeStyle = "#140818";
-    g.strokeText(text, 128, 50);
-    g.fillStyle = color;
-    g.fillText(text, 128, 50);
-    t.tex.needsUpdate = true;
-    t.sprite.position.set(x, y, z);
-    t.sprite.visible = true;
-    t.mat.opacity = 1;
-    t.life = 1;
   }
 
   private fireTracer(from: THREE.Vector3, to: THREE.Vector3, thick = 1, color = 0xffe2a8, dur = 0.07, trail = -1) {
@@ -2732,16 +2652,9 @@ export class Game {
   }
 
   private updateCombo(dt: number) {
-    if (this.streakT > 0) {
-      this.streakT -= dt;
-      if (this.streakT <= 0) this.streakCount = 0;
-    }
     if (this.comboCount <= 0) return;
     this.comboT -= dt;
-    if (this.comboT <= 0) {
-      this.comboCount = 0;
-      hud.set({ combo: 0 });
-    }
+    if (this.comboT <= 0) this.comboCount = 0;
   }
 
   /* ------------------------------------------------ player / weapons */
@@ -2901,7 +2814,7 @@ export class Game {
                   this.burst(exit, 0xd88aff, 11, 4.4);
                   this.miniFireball(exit, 0.75, 0.18);
                   if (entryPt) this.fireTracer(entryPt, exit, 1.6, 0xd88aff, 0.09);
-                  if (usedNow >= 1) this.showText(exit.x, exit.y + 0.8, exit.z, `VERDICT ×${usedNow + 1}`, "#d88aff");
+
                   sfx.portal();
                 }
               },
@@ -2983,7 +2896,6 @@ export class Game {
       this.burst(hp, 0xb4ff3c, 8, 3.4);
       this.miniFireball(hp, 0.6, 0.18);
       this.spawnDecal(this.v3.set(gp.x, 0.02, gp.z), this.v2.set(0, 1, 0), 0x6fae1e, rand(0.9, 1.4), 3.2);
-      this.showText(hp.x, hp.y + 0.5, hp.z, `ACID ×${e.acidStacks}`, "#b4ff3c");
       sfx.splat();
     }
     this.damageEnemy(e, dmg, hp, isHead, gun);
@@ -3014,8 +2926,6 @@ export class Game {
     this.fireTracer(fromPt.clone(), tp.clone(), 0.6, 0xd8ffe0, 0.06);
     this.burst(tp, 0x8dff3a, 6, 3.2);
     sfx.ric();
-    const n = 4 - bounces;
-    this.showText(tp.x, tp.y + 0.6, tp.z, `RICO ×${n}`, "#8dff3a");
     this.damageEnemy(best, dmg, tp, false, 0);
     if (bounces > 1) {
       const next = best;
@@ -3085,7 +2995,6 @@ export class Game {
     this.flashMats[i].color.set(UPG_TINT[i]);
     sfx.evolve();
     hud.banner(`${UPG_NAMES[i]} ONLINE`, UPG_QUIRK[i]);
-    hud.feed(`${UPG_NAMES[i]} FUSED WITH ALIEN TECH`, "#c05aff");
     /* fusion moment: pillar of alien light, shockwave, a beat of slow-mo */
     const beam = this.spawnBeam(this.v1.set(this.pos.x, 0, this.pos.z), UPG_TINT[i]);
     beam.mesh.scale.set(1.7, 1, 1.7);
@@ -3109,7 +3018,7 @@ export class Game {
     this.hudSync();
   }
 
-  private damagePlayer(d: number, source: string) {
+  private damagePlayer(d: number) {
     if (this.state !== "playing") return;
     this.health = Math.max(0, this.health - d);
     this.shake += 0.8;
@@ -3117,7 +3026,6 @@ export class Game {
     sfx.hurt();
     hud.dmg();
     this.post.pulseDamage();
-    hud.feed(`HIT BY ${source}  -${d} HP`, "#ff5a5a");
     this.hudSync();
     if (this.health <= 0) this.gameOver();
   }
@@ -3154,7 +3062,7 @@ export class Game {
     this.queue = q;
     this.spawnT = 0.6;
     this.waveBreak = -1;
-    hud.banner(`WAVE ${n}`, n % 5 === 0 ? "BOSS WAVE. BRING THE BOOMSTICK." : pick(WAVE_LINES));
+    hud.banner(`WAVE ${n}`);
     sfx.wave();
     if (n % 3 === 0 && this.ufoEvt < 0) this.ufoEvt = 0;
     this.hudSync();
@@ -3180,7 +3088,7 @@ export class Game {
       this.reserves[1] = Math.min(48, this.reserves[1] + 12);
       this.reserves[2] = Math.min(48, this.reserves[2] + 10);
       this.reserves[3] = Math.min(12, this.reserves[3] + 3);
-      hud.banner("WAVE CLEARED", `SECTOR BONUS +${bonus}`);
+      hud.banner("WAVE CLEARED");
       sfx.clear();
       this.hudSync();
     } else if (this.waveBreak > 0) {
@@ -3421,7 +3329,7 @@ export class Game {
               e.leapT = 0;
               this.burst(this.v1.set(gp.x, 0.2, gp.z), 0xc4a06a, 6, 2.5);
               sfx.land();
-              if (dist < 2.2) this.damagePlayer(e.dmg, "LEAPING GRUNT");
+              if (dist < 2.2) this.damagePlayer(e.dmg);
             }
           } else {
             e.leapCd -= dt;
@@ -3449,7 +3357,7 @@ export class Game {
               const phase = (t: number) => Math.sin(((0.3 - t) / 0.3) * Math.PI);
               e.parts.body.position.z = phase(Math.max(0, e.lungeT)) * 0.45;
               if (prev > 0.15 && e.lungeT <= 0.15 && dist < e.radius + 1.6) {
-                this.damagePlayer(e.dmg, "ALIEN GRUNT");
+                this.damagePlayer(e.dmg);
               }
             } else {
               e.parts.body.position.z = 0;
@@ -3462,7 +3370,7 @@ export class Game {
             gp.z += e.chargeDZ * e.speed * 3.4 * dt;
             if (!e.chargeHit && dist < e.radius + 1.3) {
               e.chargeHit = true;
-              this.damagePlayer(Math.round(e.dmg * 1.5), e.boss ? "EL JEFE" : "BRUTE CHARGE");
+              this.damagePlayer(Math.round(e.dmg * 1.5));
               this.shake += 0.7;
               this.shakeR += 0.08;
             }
@@ -3495,7 +3403,7 @@ export class Game {
               const phase = (t: number) => Math.sin(((0.3 - t) / 0.3) * Math.PI);
               e.parts.body.position.z = phase(Math.max(0, e.lungeT)) * 0.45;
               if (prev > 0.15 && e.lungeT <= 0.15 && dist < e.radius + 1.6) {
-                this.damagePlayer(e.dmg, e.boss ? "EL JEFE" : "BRUTE");
+                this.damagePlayer(e.dmg);
               }
             } else {
               e.parts.body.position.z = 0;
@@ -3603,7 +3511,7 @@ export class Game {
         p.active = false;
         p.mesh.visible = false;
         this.burst(mp, 0x8dff3a, 8, 3.5);
-        this.damagePlayer((p.mesh.userData.dmg as number) || 12, "ACID SPIT");
+        this.damagePlayer((p.mesh.userData.dmg as number) || 12);
         continue;
       }
       if (p.life <= 0 || Math.abs(mp.x) > 120 || Math.abs(mp.z) > 120) {
@@ -3708,7 +3616,7 @@ export class Game {
     }
     /* backblast — respect the blast radius, tex */
     const pd = Math.hypot(this.pos.x - at.x, this.pos.z - at.z);
-    if (pd < R) this.damagePlayer(Math.round(22 * (1 - pd / R)), "BOOMSTICK BACKBLAST");
+    if (pd < R) this.damagePlayer(Math.round(22 * (1 - pd / R)));
   }
 
   /* PRIME golden warhead — four counter-rotating shells, bigger and hotter */
@@ -3819,8 +3727,6 @@ export class Game {
         if (p.kind === "health") {
           this.health = Math.min(100, this.health + 25);
           sfx.heal();
-          hud.feed("MEDKIT  +25 HP", "#6cff8a");
-          this.showText(this.pos.x, 2.4, this.pos.z, "+25 HP", "#6cff8a");
         } else if (p.kind === "nuke") {
           this.nukeBlast();
         } else {
@@ -3829,8 +3735,6 @@ export class Game {
           this.reserves[2] = Math.min(48, this.reserves[2] + 8);
           this.reserves[3] = Math.min(12, this.reserves[3] + 2);
           sfx.pickup();
-          hud.feed("AMMO CACHE RESTOCKED", "#ffd23f");
-          this.showText(this.pos.x, 2.4, this.pos.z, "AMMO", "#ffd23f");
         }
         this.hudSync();
         continue;
@@ -4000,17 +3904,6 @@ export class Game {
     }
   }
 
-  private updateTexts(dt: number) {
-    for (const t of this.texts) {
-      if (t.life > 0) {
-        t.life -= dt * 1.1;
-        t.sprite.position.y += dt * 1.7;
-        t.mat.opacity = Math.max(0, Math.min(1, t.life * 2));
-        if (t.life <= 0) t.sprite.visible = false;
-      }
-    }
-  }
-
   private drawRadar() {
     const c = this.radar;
     if (!c) return;
@@ -4084,7 +3977,6 @@ export class Game {
     const b = this.spawnBeam(this.v2.set(this.pos.x, 0, this.pos.z), 0xffd23f);
     b.mesh.scale.set(3, 1.4, 3);
     for (const e of [...this.enemies]) if (!e.dying) this.killEnemy(e, true);
-    hud.feed("TACTICAL NUKE DETONATED", "#ffd23f");
   }
 
   private hudSync() {
@@ -4121,10 +4013,6 @@ export class Game {
     for (const t of this.tracers) {
       t.life = 0;
       t.mesh.visible = false;
-    }
-    for (const t of this.texts) {
-      t.life = 0;
-      t.sprite.visible = false;
     }
     for (const p of this.particles) p.active = false;
     for (const d of this.decals) {
@@ -4173,8 +4061,6 @@ export class Game {
     this.waveBreak = -1;
     this.comboCount = 0;
     this.comboT = 0;
-    this.streakCount = 0;
-    this.streakT = 0;
     this.ufoEvt = -1;
     this.ufoEvtSpawned = false;
     for (const r of this.rockets) {
@@ -4340,7 +4226,6 @@ export class Game {
       this.updateParticles(dt);
       this.updateTracers(dt);
       this.updateTrails(dt);
-      this.updateTexts(dt);
       this.updateFX(dt);
       this.updateAmbient(dt);
       this.updateLights(dt);
