@@ -2,6 +2,17 @@ import { useSyncExternalStore } from "react";
 
 export type GameState = "menu" | "playing" | "paused" | "gameover";
 
+/* alien-tech evolution: kills needed per gun, evolved names, quirk lines */
+export const UNLOCK_AT = [25, 12, 20, 8];
+export const UPG_NAMES = ["RATTLER X", "EL JUEZ", "PUMPER-X SAURIO", "BOOMSTICK PRIME"];
+export const UPG_SHORT = ["RAT-X", "JUEZ", "SAURIO", "PRIME"];
+export const UPG_QUIRK = [
+  "HIVE ROUNDS PIERCE THROUGH TARGETS",
+  "VOID ROUNDS DRAG ENEMIES TO THE IMPACT",
+  "ACID SHELLS MELT ARMOR OVER TIME",
+  "CLUSTER WARHEADS SPLIT ON IMPACT",
+];
+
 export interface FeedItem {
   id: number;
   text: string;
@@ -32,6 +43,8 @@ export interface Hud {
   boomId: number;
   bossHp: number;
   bossName: string;
+  upgrades: boolean[];
+  gunKills: number[];
 }
 
 const loadBest = (): number => {
@@ -66,6 +79,8 @@ let s: Hud = {
   boomId: 0,
   bossHp: 0,
   bossName: "",
+  upgrades: [false, false, false, false],
+  gunKills: [0, 0, 0, 0],
 };
 
 const listeners = new Set<() => void>();

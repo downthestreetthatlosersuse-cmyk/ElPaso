@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { sfx } from "./audio";
-import { hud } from "./store";
+import { hud, UNLOCK_AT, UPG_NAMES, UPG_QUIRK } from "./store";
 import { createPostFX, type PostFX } from "./postfx";
 
 /* internal render resolution — chunky 480i-style pixels */
@@ -54,6 +54,15 @@ const STREAKS: [number, string][] = [
   [7, "RAMPAGE"],
   [10, "UNSTOPPABLE"],
 ];
+
+/* alien-tech evolution stats: [dmg, rate, magSize, reloadTime, spread] */
+const UPG: [number, number, number, number, number][] = [
+  [14, 0.062, 44, 1.0, 0.018],
+  [95, 0.33, 6, 1.35, 0.004],
+  [14, 0.62, 8, 1.6, 0.095],
+  [190, 0.8, 2, 1.7, 0.004],
+];
+const UPG_TINT = [0x8dff3a, 0xc05aff, 0xb4ff3c, 0xffc040];
 
 const WAVE_LINES = [
   "COME GET SOME!",
@@ -110,6 +119,10 @@ interface Enemy {
   chargeDZ: number;
   chargeHit: boolean;
   boss: boolean;
+  acidT: number;
+  acidTick: number;
+  acidStacks: number;
+  lastGun: number;
 }
 
 interface Decal {
@@ -206,6 +219,13 @@ export class Game {
   private weaponIdx = 0;
   private mags = [32, 6, 8, 1];
   private reserves = [160, 36, 32, 9];
+  /* alien-tech evolution */
+  private killsByGun = [0, 0, 0, 0];
+  private upgraded = [false, false, false, false];
+  private upgradeFX: THREE.Group[] = [];
+  private upgradeMats: THREE.MeshBasicMaterial[] = [];
+  private wells: { pos: THREE.Vector3; t: number; dur: number }[] = [];
+  private clusters: { pos: THREE.Vector3; t: number }[] = [];
   /* killstreak */
   private streakCount = 0;
   private streakT = 0;
@@ -1495,6 +1515,41 @@ export class Game {
     rpg.visible = false;
     mag.visible = false;
     this.camera.add(this.gunGroup);
+
+    /* alien-tech overlays: glowing power strip + core orb per gun, revealed on evolve */
+    const stripDefs: [number, number, number, number, number, number][] = [
+      [0.02, 0.014, 0.3, 0, 0.068, -0.08],
+      [0.014, 0.014, 0.36, 0.03, 0.048, -0.14],
+      [0.016, 0.012, 0.42, 0, 0.092, -0.16],
+      [0.014, 0.014, 0.5, 0.078, 0.02, -0.1],
+    ];
+    const orbDefs: [number, number, number][] = [
+      [0, -0.12, -0.05],
+      [0, 0.012, 0.03],
+      [0, 0.032, 0.06],
+      [0, 0.02, 0.16],
+    ];
+    for (let gi = 0; gi < 4; gi++) {
+      const fx = new THREE.Group();
+      const fm = new THREE.MeshBasicMaterial({
+        color: UPG_TINT[gi],
+        transparent: true,
+        opacity: 0.85,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const [sw, sh, sd, sx, sy, sz] = stripDefs[gi];
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(sw, sh, sd), fm);
+      strip.position.set(sx, sy, sz);
+      fx.add(strip);
+      const orb = new THREE.Mesh(new THREE.SphereGeometry(0.022, 8, 6), fm);
+      orb.position.set(orbDefs[gi][0], orbDefs[gi][1], orbDefs[gi][2]);
+      fx.add(orb);
+      fx.visible = false;
+      this.guns[gi].add(fx);
+      this.upgradeFX.push(fx);
+      this.upgradeMats.push(fm);
+    }
   }
 
   private initPools() {
@@ -1866,6 +1921,10 @@ export class Game {
       chargeDZ: 0,
       chargeHit: false,
       boss: kind === "boss",
+      acidT: 0,
+      acidTick: 0,
+      acidStacks: 0,
+      lastGun: -1,
     };
     for (const m of hitMeshes) m.userData.e = e;
     if (kind === "boss") g.scale.set(1.5, 1.5, 1.5);
@@ -1984,6 +2043,11 @@ export class Game {
       sfx.alienDie();
     }
     if (byPlayer) {
+      /* per-gun kill tracking → alien-tech evolution */
+      if (e.lastGun >= 0 && !this.upgraded[e.lastGun]) {
+        this.killsByGun[e.lastGun]++;
+        if (this.killsByGun[e.lastGun] >= UNLOCK_AT[e.lastGun]) this.unlockWeapon(e.lastGun);
+      }
       if (this.comboT > 0) this.comboCount++;
       else this.comboCount = 1;
       this.comboT = 2.6;
@@ -2019,8 +2083,9 @@ export class Game {
     this.hudSync();
   }
 
-  private damageEnemy(e: Enemy, dmg: number, point: THREE.Vector3, isHead: boolean) {
+  private damageEnemy(e: Enemy, dmg: number, point: THREE.Vector3, isHead: boolean, gunIdx = -1) {
     if (e.dying) return;
+    if (gunIdx >= 0) e.lastGun = gunIdx;
     e.hp -= dmg;
     e.hitPop = 0.22;
     const bm = e.parts.body as THREE.Mesh;
@@ -2421,6 +2486,21 @@ export class Game {
     }
   }
 
+  private miniFireball(pos: THREE.Vector3, max: number, dur: number) {
+    let f = this.fireballs.find((x) => x.life <= 0);
+    if (!f) f = this.fireballs[0];
+    f.mesh.visible = true;
+    f.baseY = Math.max(0.3, pos.y);
+    f.mesh.position.set(pos.x, f.baseY, pos.z);
+    f.mesh.scale.set(0.01, 0.01, 0.01);
+    f.mat.color.set(0xffffff);
+    f.life = f.dur = dur;
+    f.max = max;
+    f.rise = 1.2;
+    f.spin = rand(-4, 4);
+    f.peak = 1;
+  }
+
   private firePillar(pos: THREE.Vector3) {
     let p = this.pillars.find((x) => x.life <= 0);
     if (!p) p = this.pillars[0];
@@ -2531,8 +2611,10 @@ export class Game {
       this.shootCd = 0.2;
       return;
     }
-    this.mags[this.weaponIdx]--;
-    this.shootCd = w.rate;
+    const i = this.weaponIdx;
+    const upg = this.upgraded[i];
+    this.mags[i]--;
+    this.shootCd = this.effRate(i);
     this.recoil = Math.min(1.4, this.recoil + w.recoil * 0.55);
     /* muzzle flash: per-weapon duration, fresh roll + scale every shot */
     this.flashT = [0.05, 0.07, 0.08, 0.1][this.weaponIdx];
@@ -2574,7 +2656,8 @@ export class Game {
     }
 
     /* hitscan — per pellet */
-    const baseSpread = w.spread * (1 + this.bloom * 1.15);
+    const dmg = this.effDmg(i);
+    const baseSpread = this.effSpread(i) * (1 + this.bloom * 1.15);
     this.camera.getWorldDirection(this.v1);
     const baseDir = this.v1.clone();
     const dir = new THREE.Vector3();
@@ -2616,53 +2699,160 @@ export class Game {
       const targets: THREE.Object3D[] = [...this.hitList, ...this.envMeshes];
       const hits = this.raycaster.intersectObjects(targets, false);
       let end: THREE.Vector3;
+      let wellAt: THREE.Vector3 | null = null;
       if (hits.length > 0) {
-        const h = hits[0];
-        end = h.point.clone();
-        const e = h.object.userData.e as Enemy | undefined;
-        if (e) {
-          const headY = e.kind === "brute" || e.kind === "boss" ? 1.95 : 1.5;
-          const isHead = h.point.y > e.group.position.y + headY * e.groupBase;
-          this.damageEnemy(e, isHead ? w.dmg * 1.8 : w.dmg, h.point, isHead);
-        } else {
-          this.burst(h.point, 0xffb050, 4, 3);
-          if (h.face) {
-            const n = h.face.normal.clone().transformDirection(h.object.matrixWorld);
-            this.spawnDecal(h.point, n, 0x17100c, rand(0.24, 0.5), rand(5, 8));
+        /* RATTLER X hive rounds pierce up to 3 targets with falloff */
+        const pierce = i === 0 && upg ? 3 : 0;
+        const falloffs = [1, 0.75, 0.55, 0.4];
+        let used = 0;
+        let last: THREE.Intersection | null = null;
+        for (const h of hits) {
+          const e = h.object.userData.e as Enemy | undefined;
+          if (e) {
+            const headY = e.kind === "brute" || e.kind === "boss" ? 1.95 : 1.5;
+            const isHead = h.point.y > e.group.position.y + headY * e.groupBase;
+            this.damageEnemy(e, (isHead ? 1.8 : 1) * dmg * falloffs[used], h.point, isHead, i);
+            /* PUMPER-X SAURIO: acid shells stack a melt-over-time */
+            if (i === 2 && upg) {
+              e.acidT = 3;
+              e.acidStacks = Math.min(3, e.acidStacks + 1);
+            }
+            last = h;
+            used++;
+            if (used > pierce) break;
+          } else {
+            this.burst(h.point, 0xffb050, 4, 3);
+            if (h.face) {
+              const n = h.face.normal.clone().transformDirection(h.object.matrixWorld);
+              this.spawnDecal(h.point, n, 0x17100c, rand(0.24, 0.5), rand(5, 8));
+            }
+            last = h;
+            break;
           }
         }
+        end = last ? last.point.clone() : this.camera.position.clone().addScaledVector(dir, 120);
+        /* EL JUEZ: void rounds leave a singularity that drags enemies in */
+        if (i === 1 && upg) wellAt = end;
       } else {
         end = this.camera.position.clone().addScaledVector(dir, 120);
       }
-      if (this.weaponIdx === 1) {
-        this.fireTracer(this.muzzleV.clone(), end, 2.4, 0xffb050, 0.1);
-      } else if (this.weaponIdx === 2) {
-        this.fireTracer(this.muzzleV.clone(), end, 1.5, 0xffc060, 0.06);
+      if (wellAt) this.spawnWell(wellAt);
+      const trCol = upg ? UPG_TINT[i] : i === 1 ? 0xffb050 : i === 2 ? 0xffc060 : 0xffe2a8;
+      if (i === 1) {
+        this.fireTracer(this.muzzleV.clone(), end, 2.4, trCol, 0.1);
+      } else if (i === 2) {
+        this.fireTracer(this.muzzleV.clone(), end, 1.5, trCol, 0.06);
       } else {
-        this.fireTracer(this.muzzleV.clone(), end, 1, 0xffe2a8, 0.07);
+        this.fireTracer(this.muzzleV.clone(), end, i === 0 && upg ? 1.6 : 1, trCol, 0.07);
       }
     }
     this.hudSync();
   }
 
+  /* EL JUEZ void singularity */
+  private spawnWell(pos: THREE.Vector3) {
+    this.wells.push({ pos: pos.clone(), t: 0.7, dur: 0.7 });
+    this.spawnRing(pos, 0xc05aff, 4.5, 0.7);
+    this.fireEventLight(pos.x, pos.y + 0.5, pos.z, 0xc05aff, 120, 0.5);
+    sfx.well();
+  }
+
+  private updateWells(dt: number) {
+    for (let wi = this.wells.length - 1; wi >= 0; wi--) {
+      const wl = this.wells[wi];
+      wl.t -= dt;
+      if (wl.t <= 0) {
+        this.wells.splice(wi, 1);
+        continue;
+      }
+      const strength = 10 * (wl.t / wl.dur);
+      for (const e of this.enemies) {
+        if (e.dying) continue;
+        const gp = e.group.position;
+        const dx = wl.pos.x - gp.x;
+        const dz = wl.pos.z - gp.z;
+        const d = Math.hypot(dx, dz);
+        if (d > 0.6 && d < 5.5) {
+          gp.x += (dx / d) * strength * dt;
+          gp.z += (dz / d) * strength * dt;
+        }
+      }
+    }
+  }
+
+  /* BOOMSTICK PRIME cluster submunitions */
+  private updateClusters(dt: number) {
+    for (let ci = this.clusters.length - 1; ci >= 0; ci--) {
+      const c = this.clusters[ci];
+      c.t -= dt;
+      if (c.t > 0) continue;
+      this.clusters.splice(ci, 1);
+      const p = c.pos;
+      sfx.boom();
+      this.shake += 0.35;
+      this.miniFireball(p, 1.9, 0.3);
+      this.spawnRing(p, 0xffd2a0, 6, 0.4);
+      this.fireEventLight(p.x, p.y + 1, p.z, 0xffa030, 150, 0.3);
+      this.burst(p, 0xffc040, 10, 6);
+      this.spawnDecal(this.v3.set(p.x, 0.02, p.z), this.v2.set(0, 1, 0), 0x100c08, 1.6, 11);
+      for (const e of [...this.enemies]) {
+        if (e.dying) continue;
+        const ep = e.group.position;
+        const d = Math.hypot(ep.x - p.x, ep.z - p.z);
+        if (d < 3.6) {
+          this.damageEnemy(e, Math.round(70 * (1 - (d / 3.6) * 0.5)), this.v1.set(ep.x, 1.2, ep.z), false, 3);
+        }
+      }
+    }
+  }
+
   private tryReload() {
-    const w = WEAPONS[this.weaponIdx];
     const i = this.weaponIdx;
-    if (this.reloading || this.mags[i] >= w.magSize || this.reserves[i] <= 0) return;
+    if (this.reloading || this.mags[i] >= this.effMag(i) || this.reserves[i] <= 0) return;
     this.reloading = true;
-    this.reloadT = w.reloadTime;
+    this.reloadT = this.effReload(i);
     sfx.reload();
     this.hudSync();
   }
 
   private finishReload() {
-    const w = WEAPONS[this.weaponIdx];
     const i = this.weaponIdx;
-    const need = w.magSize - this.mags[i];
+    const need = this.effMag(i) - this.mags[i];
     const take = Math.min(need, this.reserves[i]);
     this.mags[i] += take;
     this.reserves[i] -= take;
     this.reloading = false;
+    this.hudSync();
+  }
+
+  /* effective (possibly evolved) weapon stats */
+  private effDmg(i: number) {
+    return this.upgraded[i] ? UPG[i][0] : WEAPONS[i].dmg;
+  }
+  private effRate(i: number) {
+    return this.upgraded[i] ? UPG[i][1] : WEAPONS[i].rate;
+  }
+  private effMag(i: number) {
+    return this.upgraded[i] ? UPG[i][2] : WEAPONS[i].magSize;
+  }
+  private effReload(i: number) {
+    return this.upgraded[i] ? UPG[i][3] : WEAPONS[i].reloadTime;
+  }
+  private effSpread(i: number) {
+    return this.upgraded[i] ? UPG[i][4] : WEAPONS[i].spread;
+  }
+
+  private unlockWeapon(i: number) {
+    this.upgraded[i] = true;
+    this.mags[i] = UPG[i][2];
+    this.reserves[i] += [90, 12, 24, 5][i];
+    this.upgradeFX[i].visible = true;
+    this.flashMats[i].color.set(UPG_TINT[i]);
+    sfx.evolve();
+    hud.banner(`${UPG_NAMES[i]} ONLINE`, UPG_QUIRK[i]);
+    hud.feed(`${UPG_NAMES[i]} FUSED WITH ALIEN TECH`, "#c05aff");
+    this.burst(this.v1.set(this.pos.x, 1.6, this.pos.z), UPG_TINT[i], 20, 4);
+    this.fireEventLight(this.pos.x, 2, this.pos.z, UPG_TINT[i], 160, 0.5);
     this.hudSync();
   }
 
@@ -2908,6 +3098,12 @@ export class Game {
     /* muzzle light: sharp exponential falloff — flash, not lamp */
     this.gunLight.intensity *= Math.exp(-dt * 44);
     if (this.gunLight.intensity < 0.6) this.gunLight.intensity = 0;
+    /* alien-tech overlays pulse with a living energy hum */
+    for (let ui = 0; ui < this.upgradeFX.length; ui++) {
+      if (this.upgradeFX[ui].visible) {
+        this.upgradeMats[ui].opacity = 0.65 + Math.sin(this.clock.elapsedTime * 7 + ui * 1.7) * 0.3;
+      }
+    }
     /* menu: gun hidden */
     this.gunGroup.visible = this.state === "playing" || this.state === "paused";
   }
@@ -2923,6 +3119,19 @@ export class Game {
         e.group.scale.set(s, s, s);
         if (t >= 1) this.removeEnemy(e);
         continue;
+      }
+
+      /* PUMPER-X SAURIO: stacked acid melt */
+      if (e.acidT > 0) {
+        e.acidT -= dt;
+        e.acidTick -= dt;
+        if (e.acidTick <= 0) {
+          e.acidTick = 0.4;
+          const gp2 = e.group.position;
+          this.damageEnemy(e, 2.5 * e.acidStacks, this.v1.set(gp2.x, 1.1, gp2.z), false);
+          this.burst(this.v1.set(gp2.x, 1.3, gp2.z), 0xb4ff3c, 4, 2.2);
+        }
+        if (e.acidT <= 0) e.acidStacks = 0;
       }
 
       const gp = e.group.position;
@@ -3203,19 +3412,31 @@ export class Game {
     this.embers(this.v3.set(at.x, at.y + 0.5, at.z), 16);
     this.burst(this.v3.set(at.x, at.y + 0.4, at.z), 0x3a3632, 18, 2.6, 1.5);
     this.spawnDecal(this.v3.set(at.x, 0.02, at.z), this.v2.set(0, 1, 0), 0x100c08, 3.0, 14);
+    const R = this.upgraded[3] ? 8.5 : 7.2;
+    const rdmg = this.effDmg(3);
     for (const e of [...this.enemies]) {
       if (e.dying) continue;
       const ep = e.group.position;
       const d = Math.hypot(ep.x - at.x, ep.z - at.z);
-      if (d < 7.2) {
-        const dmg = Math.round(WEAPONS[3].dmg * (1 - (d / 7.2) * 0.55));
-        this.damageEnemy(e, dmg, this.v1.set(ep.x, 1.2, ep.z), false);
+      if (d < R) {
+        this.damageEnemy(e, Math.round(rdmg * (1 - (d / R) * 0.55)), this.v1.set(ep.x, 1.2, ep.z), false, 3);
       }
     }
     /* backblast — respect the blast radius, tex */
     const pd = Math.hypot(this.pos.x - at.x, this.pos.z - at.z);
-    if (pd < 7.2) this.damagePlayer(Math.round(22 * (1 - pd / 7.2)), "BOOMSTICK BACKBLAST");
+    if (pd < R) this.damagePlayer(Math.round(22 * (1 - pd / R)), "BOOMSTICK BACKBLAST");
     this.fovKick += 2.2;
+    /* BOOMSTICK PRIME: cluster warheads split into 3 delayed submunitions */
+    if (this.upgraded[3]) {
+      for (let c = 0; c < 3; c++) {
+        const a = rand(0, Math.PI * 2);
+        const rr = rand(2.2, 3.9);
+        this.clusters.push({
+          pos: new THREE.Vector3(at.x + Math.cos(a) * rr, Math.max(0.2, at.y), at.z + Math.sin(a) * rr),
+          t: 0.12 + c * 0.11,
+        });
+      }
+    }
   }
 
   private updateRockets(dt: number) {
@@ -3455,11 +3676,13 @@ export class Game {
       health: Math.round(this.health),
       mag: this.mags[this.weaponIdx],
       reserve: this.reserves[this.weaponIdx],
-      weapon: WEAPONS[this.weaponIdx].name,
+      weapon: this.upgraded[this.weaponIdx] ? UPG_NAMES[this.weaponIdx] : WEAPONS[this.weaponIdx].name,
       weaponSlot: this.weaponIdx,
       reloading: this.reloading,
       wave: this.wave,
       enemiesLeft: this.enemies.filter((e) => !e.dying).length + this.queue.length,
+      upgrades: [...this.upgraded],
+      gunKills: [...this.killsByGun],
     });
   }
 
@@ -3510,6 +3733,12 @@ export class Game {
     this.weaponIdx = 0;
     this.mags = [32, 6, 8, 1];
     this.reserves = [160, 36, 32, 9];
+    this.killsByGun = [0, 0, 0, 0];
+    this.upgraded = [false, false, false, false];
+    for (const fx of this.upgradeFX) fx.visible = false;
+    for (let mi = 0; mi < this.flashMats.length; mi++) this.flashMats[mi].color.set(0xffffff);
+    this.wells = [];
+    this.clusters = [];
     this.shootCd = 0;
     this.reloading = false;
     this.recoil = 0;
@@ -3675,6 +3904,8 @@ export class Game {
     } else if (this.state === "playing") {
       this.updatePlayer(dt);
       this.updateEnemies(dt);
+      this.updateWells(dt);
+      this.updateClusters(dt);
       this.updateProjectiles(dt);
       this.updateRockets(dt);
       this.updatePickups(dt);

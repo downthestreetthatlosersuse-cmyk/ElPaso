@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Game } from "./game/Game";
-import { useHud, type Hud } from "./game/store";
+import { useHud, type Hud, UNLOCK_AT, UPG_NAMES, UPG_SHORT } from "./game/store";
 import { initAudio } from "./game/audio";
 
 /* ------------------------------------------------ pixel hero face */
@@ -189,17 +189,36 @@ function InGameHud({ h }: { h: Hud }) {
               <span
                 key={label}
                 className={`font-crt text-base px-1.5 border ${
-                  h.weaponSlot === i
-                    ? "border-[#8dff3a] text-[#8dff3a] bg-[rgba(141,255,58,0.12)]"
-                    : "border-[#5a3a78] text-[#8a78a8]"
+                  h.upgrades[i]
+                    ? "border-[#c05aff] text-[#e0b0ff] bg-[rgba(192,90,255,0.16)] neon-flicker"
+                    : h.weaponSlot === i
+                      ? "border-[#8dff3a] text-[#8dff3a] bg-[rgba(141,255,58,0.12)]"
+                      : "border-[#5a3a78] text-[#8a78a8]"
                 }`}
-                title={`Slot ${i + 1}: ${label}`}
+                title={`Slot ${i + 1}: ${h.upgrades[i] ? UPG_NAMES[i] : label}`}
               >
-                {i + 1} {label}
+                {i + 1} {h.upgrades[i] ? UPG_SHORT[i] : label}
               </span>
             ))}
           </div>
-          <div className="font-display text-sm text-[#8dff3a] mt-1">{h.weapon}</div>
+          <div className={`font-display text-sm mt-1 ${h.upgrades[h.weaponSlot] ? "text-[#e0b0ff]" : "text-[#8dff3a]"}`}>{h.weapon}</div>
+          {/* evolution progress for the gun in hand */}
+          {!h.upgrades[h.weaponSlot] && (
+            <div className="mt-1.5">
+              <div className="font-crt text-sm text-[#8a78a8] leading-none mb-0.5">
+                EVOLVE: {h.gunKills[h.weaponSlot]}/{UNLOCK_AT[h.weaponSlot]} KILLS
+              </div>
+              <div className="w-full h-1.5 border border-[#5a3a78] bg-black">
+                <div
+                  className="h-full bg-[#c05aff] transition-all duration-200"
+                  style={{ width: `${Math.min(100, (h.gunKills[h.weaponSlot] / UNLOCK_AT[h.weaponSlot]) * 100)}%` }}
+                />
+              </div>
+            </div>
+          )}
+          {h.upgrades[h.weaponSlot] && (
+            <div className="font-crt text-sm text-[#c05aff] leading-none mt-1.5">◆ ALIEN TECH ACTIVE</div>
+          )}
           <div className="leading-none mt-1">
             <span className="font-crt text-7xl" style={{ color: h.mag === 0 ? "#ff3b30" : "#ffd23f" }}>
               {h.mag}
