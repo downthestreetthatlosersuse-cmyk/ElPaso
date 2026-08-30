@@ -447,6 +447,13 @@ export default function App() {
       {h.state === "playing" && h.health <= 30 && h.health > 0 && <div className="absolute inset-0 lowhp pointer-events-none z-30" />}
       {h.nukeId > 0 && h.state === "playing" && <div key={`n${h.nukeId}`} className="absolute inset-0 nuke-flash pointer-events-none z-30" />}
       {h.boomId > 0 && h.state === "playing" && <div key={`b${h.boomId}`} className="absolute inset-0 boom-flash pointer-events-none z-20" />}
+      {h.gunFlashId > 0 && h.state === "playing" && (
+        <div
+          key={`gf${h.gunFlashId}`}
+          className="absolute inset-0 gun-flash pointer-events-none z-20"
+          style={{ background: `radial-gradient(ellipse at center, ${h.gunFlashColor}55, ${h.gunFlashColor}22 55%, transparent 80%)` }}
+        />
+      )}
 
       {/* CRT layers — scanlines/vignette are now in the post shader */}
       <div className="pointer-events-none absolute inset-0 z-[45] overflow-hidden">

@@ -248,6 +248,18 @@
   }
 }
 
+.gun-flash {
+  animation: gunflash 0.28s ease-out forwards;
+}
+@keyframes gunflash {
+  0% {
+    opacity: 0.85;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 .nuke-flash {
   background: radial-gradient(ellipse at center, #fff8e8, #ffd23f 45%, rgba(255,120,20,0.85));
   animation: nukeflash 0.85s ease-out forwards;

@@ -45,6 +45,8 @@ export interface Hud {
   bossName: string;
   upgrades: boolean[];
   gunKills: number[];
+  gunFlashId: number;
+  gunFlashColor: string;
 }
 
 const loadBest = (): number => {
@@ -81,6 +83,8 @@ let s: Hud = {
   bossName: "",
   upgrades: [false, false, false, false],
   gunKills: [0, 0, 0, 0],
+  gunFlashId: 0,
+  gunFlashColor: "#ffffff",
 };
 
 const listeners = new Set<() => void>();
@@ -112,6 +116,11 @@ export const hud = {
   },
   dmg() {
     s = { ...s, dmgId: s.dmgId + 1 };
+    emit();
+  },
+  gunFlash(color: number) {
+    const hex = "#" + color.toString(16).padStart(6, "0");
+    s = { ...s, gunFlashId: s.gunFlashId + 1, gunFlashColor: hex };
     emit();
   },
   saveBest(score: number) {

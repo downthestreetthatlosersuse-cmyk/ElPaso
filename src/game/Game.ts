@@ -1597,8 +1597,8 @@ export class Game {
     }
 
     /* tracers */
-    for (let i = 0; i < 16; i++) {
-      const mat = new THREE.MeshBasicMaterial({ color: 0xffe2a8, transparent: true, opacity: 0 });
+    for (let i = 0; i < 32; i++) {
+      const mat = new THREE.MeshBasicMaterial({ color: 0xffe2a8, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
       const m = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.045, 1), mat);
       m.visible = false;
       m.layers.set(2);
@@ -2243,6 +2243,21 @@ export class Game {
     }
   }
 
+  /* lingering colored energy smoke — makes sustained evolved fire unmistakably tinted */
+  private tintSmoke(pos: THREE.Vector3, color: number, count: number) {
+    for (let i = 0; i < count; i++) {
+      const p = this.particles[this.pIndex];
+      this.pIndex = (this.pIndex + 1) % this.particles.length;
+      p.active = true;
+      p.pos.copy(pos).add(this.v3.set(rand(-0.1, 0.1), rand(-0.05, 0.1), rand(-0.1, 0.1)));
+      p.vel.set(rand(-0.5, 0.5), rand(0.5, 1.1), rand(-0.6, 0.2));
+      p.maxLife = p.life = rand(0.45, 0.8);
+      p.size = rand(1.1, 1.9);
+      p.color.set(color);
+      p.grav = -1.2;
+    }
+  }
+
   private spawnDecal(pos: THREE.Vector3, normal: THREE.Vector3, color: number, size: number, life: number) {
     let d = this.decals.find((d) => !d.active);
     if (!d) d = this.decals[0];
@@ -2641,10 +2656,11 @@ export class Game {
     this.flashT = [0.05, 0.07, 0.08, 0.1][this.weaponIdx];
     const fg = this.flashMeshes[this.weaponIdx];
     fg.rotation.z = rand(0, Math.PI * 2);
+    const fsb = upg ? 1.35 : 1;
     const fs =
-      this.weaponIdx === 0 ? rand(0.55, 0.95) :
-      this.weaponIdx === 1 ? rand(1.05, 1.5) :
-      this.weaponIdx === 2 ? rand(1.1, 1.5) : rand(1.4, 1.9);
+      this.weaponIdx === 0 ? rand(0.55, 0.95) * fsb :
+      this.weaponIdx === 1 ? rand(1.05, 1.5) * fsb :
+      this.weaponIdx === 2 ? rand(1.1, 1.5) * fsb : rand(1.4, 1.9) * fsb;
     if (this.weaponIdx === 2) fg.scale.set(fs * 1.6, fs * 0.85, 1);
     else fg.scale.setScalar(fs);
     this.gunLight.intensity = this.weaponIdx === 1 ? 42 : 26;
@@ -2662,12 +2678,6 @@ export class Game {
     w.sound();
     if (w.kind !== "rocket") this.casing();
     this.muzzleSmoke(this.weaponIdx === 0 ? 1 : 2);
-    /* alien-tech firing signatures — every evolved shot announces itself at the muzzle */
-    if (upg) {
-      if (i === 0) this.burst(this.muzzleV, 0x8dff3a, 3, 4.5); /* hive sparks */
-      if (i === 1) this.spawnRing(this.muzzleV, 0xc05aff, 1.5, 0.16); /* verdict flash ring */
-      if (i === 2) this.burst(this.muzzleV, 0xb4ff3c, 4, 2.0, 6); /* acid mist, falls fast */
-    }
     this.fovKick += w.fovKick;
     this.gunLight.intensity = w.kind === "rocket" ? 55 : this.gunLight.intensity;
 
@@ -2675,6 +2685,33 @@ export class Game {
     const gun = this.guns[this.weaponIdx];
     const mz = [[0, 0.015, -0.56], [0, 0.035, -0.38], [0, 0.045, -0.46], [0, 0.02, -0.47]][this.weaponIdx];
     this.muzzleV.set(mz[0], mz[1], mz[2]).applyMatrix4(gun.matrixWorld);
+
+    /* ALIEN-TECH FIRING SIGNATURES — big, unmistakable, in the gun's tint.
+       Runs at the true muzzle, before the rocket early-return, so PRIME gets it too. */
+    if (upg) {
+      const tint = UPG_TINT[i];
+      /* the muzzle light burns the evolution color, washing the street in it */
+      this.gunLight.color.set(tint);
+      this.gunLight.intensity = w.kind === "rocket" ? 72 : 55;
+      hud.gunFlash(tint);
+      if (i === 0) {
+        this.spawnRing(this.muzzleV, tint, 1.0, 0.14);
+        this.burst(this.muzzleV, tint, 6, 5);
+        this.tintSmoke(this.muzzleV, tint, 2);
+      } else if (i === 1) {
+        this.spawnRing(this.muzzleV, tint, 2.6, 0.24);
+        this.burst(this.muzzleV, 0xd88aff, 8, 5);
+        this.tintSmoke(this.muzzleV, tint, 2);
+      } else if (i === 2) {
+        this.burst(this.muzzleV, tint, 9, 2.2, 6);
+        this.tintSmoke(this.muzzleV, tint, 3);
+      } else {
+        this.burst(this.muzzleV, tint, 7, 4);
+        this.tintSmoke(this.muzzleV, tint, 2);
+      }
+    } else {
+      this.gunLight.color.set(0xffa640);
+    }
 
     if (w.kind === "rocket") {
       this.launchRocket();
@@ -2810,6 +2847,8 @@ export class Game {
       /* tracer flies at the gun's fixed projectile speed — flight time = distance / speed */
       const fly = Math.max(0.025, this.camera.position.distanceTo(end) / TRACER_SPEED[i]);
       const trCol = upg ? UPG_TINT[i] : i === 1 ? 0xffb050 : i === 2 ? 0xffc060 : 0xffe2a8;
+      /* evolved guns wrap every round in a fat additive energy halo */
+      if (upg) this.fireTracer(this.muzzleV.clone(), end, i === 1 ? 4.2 : i === 2 ? 3.4 : 3.0, trCol, fly * 1.2);
       if (i === 1) {
         this.fireTracer(this.muzzleV.clone(), end, 2.4, trCol, fly);
         /* EL JUICIO: thin white core burns inside the violet slug */
@@ -3200,7 +3239,7 @@ export class Game {
     /* alien-tech overlays pulse with a living energy hum */
     for (let ui = 0; ui < this.upgradeFX.length; ui++) {
       if (this.upgradeFX[ui].visible) {
-        this.upgradeMats[ui].opacity = 0.65 + Math.sin(this.clock.elapsedTime * 7 + ui * 1.7) * 0.3;
+        this.upgradeMats[ui].opacity = 0.85 + Math.sin(this.clock.elapsedTime * 7 + ui * 1.7) * 0.15;
       }
     }
     /* menu: gun hidden */
