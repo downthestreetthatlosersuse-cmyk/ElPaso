@@ -2214,7 +2214,8 @@ export class Game {
     tr.t = 0;
     tr.dur = dur;
     /* short bullet streak, not a laser line — length scales with round weight */
-    const len = 0.45 + thick * 0.45;
+    const len = 0.9 + thick * 0.6;
+    tr.mesh.userData.len0 = len;
     tr.mesh.scale.set(thick * 0.8 + 0.2, thick * 0.8 + 0.2, len);
     tr.mesh.position.copy(from);
     tr.mesh.lookAt(to);
@@ -3596,14 +3597,16 @@ export class Game {
         t.life = 0;
         continue;
       }
-      /* streak head flies muzzle → impact; body trails behind it */
+      /* streak head flies muzzle → impact; the tail recedes and dims behind it */
       const k = t.t;
+      const len0 = (t.mesh.userData.len0 as number) || 1;
+      t.mesh.scale.z = len0 * (1 - 0.62 * k);
       this.v2.subVectors(t.to, t.from);
       const dist = this.v2.length() || 1;
       this.v2.divideScalar(dist);
-      this.v1.lerpVectors(t.from, t.to, k).addScaledVector(this.v2, -t.mesh.scale.z * 0.5);
+      this.v1.lerpVectors(t.from, t.to, k).addScaledVector(this.v2, -(t.mesh.scale.z - 0.1) * 0.5);
       t.mesh.position.copy(this.v1);
-      t.mat.opacity = k < 0.7 ? 0.95 : 0.95 * (1 - (k - 0.7) / 0.3);
+      t.mat.opacity = k < 0.55 ? 0.95 : 0.95 * (1 - (k - 0.55) / 0.45);
     }
   }
 
