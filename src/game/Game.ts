@@ -3157,9 +3157,8 @@ export class Game {
     }
 
     this.shake = Math.max(0, this.shake - dt * 3.4);
-    /* sprint adds a constant rattle; impacts stack on top */
-    const sprintRattle = sprint && horiz > 6 ? 0.035 : 0;
-    const sh = this.shake * this.shake * 0.6 + sprintRattle;
+    /* impact shake only — movement gets head bob, not rattle */
+    const sh = this.shake * this.shake * 0.6;
     const sr = this.shakeR;
     const breathe = Math.sin(this.clock.elapsedTime * 1.7) * 0.01;
     this.camera.position.set(
