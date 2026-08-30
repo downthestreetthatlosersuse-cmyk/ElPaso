@@ -154,6 +154,7 @@ interface BeamFX {
 interface TrailEmitter {
   active: boolean;
   kind: number; /* 0 hive · 1 verdict · 2 acid */
+  gun: number; /* which viewmodel the source end stays glued to */
   from: THREE.Vector3;
   to: THREE.Vector3;
   t0: number;
@@ -166,6 +167,8 @@ interface Burn {
   mat: THREE.MeshBasicMaterial;
   life: number;
   max: number;
+  w: number;
+  emitter: TrailEmitter | null; /* if set, the burn re-flows with the live wake */
 }
 
 interface Projectile {
@@ -1811,6 +1814,7 @@ export class Game {
       this.trailEmitters.push({
         active: false,
         kind: 0,
+        gun: -1,
         from: new THREE.Vector3(),
         to: new THREE.Vector3(),
         t0: 0,
@@ -1833,11 +1837,11 @@ export class Game {
       mesh.layers.set(2);
       mesh.renderOrder = 7;
       this.scene.add(mesh);
-      this.burns.push({ mesh, mat, life: 0, max: 1 });
+      this.burns.push({ mesh, mat, life: 0, max: 1, w: 0.1, emitter: null });
     }
   }
 
-  private spawnBurn(from: THREE.Vector3, to: THREE.Vector3, color: number, dur: number, width: number, peak: number) {
+  private spawnBurn(from: THREE.Vector3, to: THREE.Vector3, color: number, dur: number, width: number, peak: number, emitter: TrailEmitter | null = null) {
     let b = this.burns.find((x) => x.life <= 0);
     if (!b) b = this.burns[0];
     const len = Math.max(0.2, from.distanceTo(to));
@@ -1848,6 +1852,14 @@ export class Game {
     b.mat.color.set(color);
     b.mat.opacity = peak;
     b.life = b.max = dur;
+    b.w = width;
+    b.emitter = emitter;
+  }
+
+  /* world position of a gun's muzzle tip — lets live wakes stay glued to the viewmodel */
+  private gunMuzzle(gunIdx: number, out: THREE.Vector3): THREE.Vector3 {
+    const mz = [[0, 0.015, -0.56], [0, 0.035, -0.38], [0, 0.045, -0.46], [0, 0.02, -0.47]][gunIdx];
+    return out.set(mz[0], mz[1], mz[2]).applyMatrix4(this.guns[gunIdx].matrixWorld);
   }
 
   /* ------------------------------------------------ entities */
@@ -2324,22 +2336,24 @@ export class Game {
     tr.mat.color.set(color);
     tr.mat.opacity = 0.95;
     tr.life = dur;
-    /* bespoke wake rides the projectile for its whole flight */
+    /* bespoke wake rides the projectile for its whole flight.
+       The source end stays glued to the firing gun so it re-flows as you move. */
     if (trail >= 0) {
       let em = this.trailEmitters.find((e) => !e.active);
       if (!em) em = this.trailEmitters[0];
       em.active = true;
       em.kind = trail;
+      em.gun = this.weaponIdx;
       em.from.copy(from);
       em.to.copy(to);
       em.t0 = this.gameT;
       em.dur = Math.max(0.03, dur);
       em.acc = 0;
-      /* burned channel left hanging in the air */
-      if (trail === 0) this.spawnBurn(from, to, 0x8dff3a, 0.14, 0.05, 0.3);
+      /* burned channel hangs in the air and re-flows with the live wake */
+      if (trail === 0) this.spawnBurn(from, to, 0x8dff3a, 0.14, 0.05, 0.3, em);
       if (trail === 1) {
-        this.spawnBurn(from, to, 0xc05aff, 0.4, 0.1, 0.42);
-        this.spawnBurn(from, to, 0xe8c8ff, 0.28, 0.035, 0.5);
+        this.spawnBurn(from, to, 0xc05aff, 0.4, 0.1, 0.42, em);
+        this.spawnBurn(from, to, 0xe8c8ff, 0.28, 0.035, 0.5, em);
       }
     }
   }
@@ -3897,6 +3911,12 @@ export class Game {
         em.active = false;
         continue;
       }
+      /* keep the wake's source glued to the firing gun's muzzle, so the
+         streak re-flows naturally as the player moves instead of freezing */
+      if (em.gun >= 0 && em.gun < this.guns.length) {
+        this.gunMuzzle(em.gun, this.v2);
+        em.from.copy(this.v2);
+      }
       em.acc -= dt;
       if (em.acc > 0) continue;
       const head = this.v1.lerpVectors(em.from, em.to, Math.max(0, k));
@@ -3945,13 +3965,20 @@ export class Game {
         }
       }
     }
-    /* afterglow streaks fade out behind the rounds */
+    /* afterglow streaks re-flow with their live wake, then freeze and fade */
     for (const b of this.burns) {
       if (b.life <= 0) continue;
       b.life -= dt;
       if (b.life <= 0) {
         b.mesh.visible = false;
+        b.emitter = null;
         continue;
+      }
+      if (b.emitter && b.emitter.active) {
+        const len = Math.max(0.2, b.emitter.from.distanceTo(b.emitter.to));
+        b.mesh.position.copy(b.emitter.from).add(b.emitter.to).multiplyScalar(0.5);
+        b.mesh.lookAt(b.emitter.to);
+        b.mesh.scale.set(b.w, b.w, len);
       }
       b.mat.opacity = (b.life / b.max) * 0.5;
     }
@@ -4142,6 +4169,7 @@ export class Game {
     for (const b of this.burns) {
       b.life = 0;
       b.mesh.visible = false;
+      b.emitter = null;
     }
     this.shootCd = 0;
     this.reloading = false;
