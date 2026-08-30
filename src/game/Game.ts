@@ -2691,8 +2691,15 @@ export class Game {
       else coneX.set(1, 0, 0);
       coneY.crossVectors(baseDir, coneX).normalize();
     }
-    for (let pi = 0; pi < w.pellets; pi++) {
-      if (w.pellets > 1) {
+    const shotCount = i === 1 && upg ? 2 : w.pellets;
+    for (let pi = 0; pi < shotCount; pi++) {
+      if (i === 1 && upg) {
+        /* EL JUICIO: twin verdict slugs fanned wide, each rails through everything */
+        const yawOff = pi === 0 ? -0.13 : 0.13;
+        const cy = Math.cos(yawOff);
+        const sy = Math.sin(yawOff);
+        dir.set(baseDir.x * cy + baseDir.z * sy, baseDir.y, -baseDir.x * sy + baseDir.z * cy).normalize();
+      } else if (w.pellets > 1) {
         /* traditional shotgun cone: uniform disk → linear widening with range.
            Sawn-off barrel = wide base cone (baseSpread ~5° half-angle). */
         const theta = Math.random() * Math.PI * 2;
