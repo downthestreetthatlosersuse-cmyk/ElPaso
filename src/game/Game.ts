@@ -2808,17 +2808,10 @@ export class Game {
       this.gunLight.color.set(tint);
       this.gunLight.intensity = w.kind === "rocket" ? 72 : 55;
       hud.gunFlash(tint);
-      if (i === 0) {
-        this.spawnRing(this.muzzleV, tint, 1.0, 0.14);
-        this.burst(this.muzzleV, 0xd8ffe0, 4, 5);
-      } else if (i === 1) {
-        this.spawnRing(this.muzzleV, tint, 2.6, 0.24);
-        this.burst(this.muzzleV, 0xe8c8ff, 5, 5);
-      } else if (i === 2) {
-        this.burst(this.muzzleV, 0xd8ffa0, 6, 3, 5);
-      } else {
-        this.burst(this.muzzleV, 0xffe8c0, 5, 4);
-      }
+      /* no extra muzzle smoke or sparks — identical gray puff to the base guns.
+         The evolution shows in the light wash, flash ring and projectile wake. */
+      if (i === 0) this.spawnRing(this.muzzleV, tint, 1.0, 0.14);
+      if (i === 1) this.spawnRing(this.muzzleV, tint, 2.6, 0.24);
     } else {
       this.gunLight.color.set(0xffa640);
     }
