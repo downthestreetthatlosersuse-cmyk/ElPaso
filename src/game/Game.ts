@@ -231,8 +231,6 @@ export class Game {
   private upgraded = [false, false, false, false];
   private upgradeFX: THREE.Group[] = [];
   private upgradeMats: THREE.MeshBasicMaterial[] = [];
-  private wells: { pos: THREE.Vector3; t: number; dur: number }[] = [];
-  private clusters: { pos: THREE.Vector3; t: number }[] = [];
   /* time-of-flight: impacts apply when the bullet arrives, not on trigger pull */
   private gameT = 0;
   private pending: { at: number; fn: () => void }[] = [];
@@ -2524,25 +2522,25 @@ export class Game {
     f.peak = 1;
   }
 
-  private firePillar(pos: THREE.Vector3) {
+  private firePillar(pos: THREE.Vector3, h = 11, dur = 0.6) {
     let p = this.pillars.find((x) => x.life <= 0);
     if (!p) p = this.pillars[0];
     p.mesh.visible = true;
     p.baseX = pos.x;
     p.mesh.position.set(pos.x, 0, pos.z);
     p.mesh.scale.set(0.2, 0.01, 0.2);
-    p.life = p.dur = 0.6;
-    p.h = 11;
+    p.life = p.dur = dur;
+    p.h = h;
   }
 
-  private fireDisk(pos: THREE.Vector3) {
+  private fireDisk(pos: THREE.Vector3, max = 6.8, dur = 0.85) {
     let d = this.fireDisks.find((x) => x.life <= 0);
     if (!d) d = this.fireDisks[0];
     d.mesh.visible = true;
     d.mesh.position.set(pos.x, 0.06, pos.z);
     d.mesh.scale.set(0.2, 0.2, 1);
-    d.life = d.dur = 0.85;
-    d.max = 6.8;
+    d.life = d.dur = dur;
+    d.max = max;
   }
 
   /* slow-rising drifting embers */
@@ -2722,10 +2720,9 @@ export class Game {
       const targets: THREE.Object3D[] = [...this.hitList, ...this.envMeshes];
       const hits = this.raycaster.intersectObjects(targets, false);
       let end: THREE.Vector3;
-      let wellAt: THREE.Vector3 | null = null;
       if (hits.length > 0) {
-        /* RATTLER X hive rounds pierce up to 3 targets with falloff */
-        const pierce = i === 0 && upg ? 3 : 0;
+        /* RATTLER X: 3 targets w/ falloff. EL JUICIO: rails through ALL, full damage. */
+        const pierce = i === 0 && upg ? 3 : i === 1 && upg ? 99 : 0;
         const falloffs = [1, 0.75, 0.55, 0.4];
         let used = 0;
         let last: THREE.Intersection | null = null;
@@ -2736,7 +2733,7 @@ export class Game {
             const isHead = h.point.y > e.group.position.y + headY * e.groupBase;
             /* impact applies when the bullet actually arrives (time of flight) */
             const arrive = this.gameT + Math.max(0.02, h.distance / TRACER_SPEED[i]);
-            const fdmg = (isHead ? 1.8 : 1) * dmg * falloffs[used];
+            const fdmg = (isHead ? 1.8 : 1) * dmg * (i === 1 ? 1 : falloffs[Math.min(used, 3)]);
             const acid = i === 2 && upg;
             const gunI = i;
             const exit = h.point.clone();
@@ -2754,6 +2751,14 @@ export class Game {
                   this.burst(exit, 0x8dff3a, 7, 3.6);
                   this.miniFireball(exit, 0.55, 0.15);
                   if (usedNow >= 1) this.showText(exit.x, exit.y + 0.7, exit.z, `PIERCE ×${usedNow + 1}`, "#8dff3a");
+                }
+                /* EL JUICIO: violet discharge erupts where the rail slug exits */
+                if (gunI === 1 && this.upgraded[1]) {
+                  this.burst(exit, 0xd88aff, 11, 4.4);
+                  this.miniFireball(exit, 0.75, 0.18);
+                  if (entryPt) this.fireTracer(entryPt, exit, 1.6, 0xd88aff, 0.09);
+                  if (usedNow >= 1) this.showText(exit.x, exit.y + 0.8, exit.z, `VERDICT ×${usedNow + 1}`, "#d88aff");
+                  sfx.portal();
                 }
               },
             });
@@ -2777,15 +2782,25 @@ export class Game {
           }
         }
         end = last ? last.point.clone() : this.camera.position.clone().addScaledVector(dir, 120);
-        /* EL JUEZ: void rounds leave a singularity where the round lands */
-        if (i === 1 && upg) wellAt = end;
+        /* EL JUICIO: the verdict slug burns a violet rail along its whole path */
+        if (i === 1 && upg) {
+          const railEnd = end.clone();
+          const rArrive = this.gameT + Math.max(0.02, this.camera.position.distanceTo(railEnd) / TRACER_SPEED[i]);
+          this.fireTracer(this.muzzleV.clone(), railEnd, 3.4, 0xd88aff, 0.26);
+          this.fireTracer(this.muzzleV.clone(), railEnd, 1.5, 0xffffff, 0.18);
+          this.pending.push({
+            at: rArrive,
+            fn: () => {
+              this.spawnRing(railEnd, 0xd88aff, 3.6, 0.42);
+              this.miniFireball(railEnd, 1.15, 0.26);
+              this.fireEventLight(railEnd.x, railEnd.y + 0.5, railEnd.z, 0xc05aff, 170, 0.4);
+              this.burst(railEnd, 0xe8c8ff, 10, 4.8);
+              sfx.portal();
+            },
+          });
+        }
       } else {
         end = this.camera.position.clone().addScaledVector(dir, 120);
-      }
-      if (wellAt) {
-        const wp = wellAt.clone();
-        const wArrive = this.gameT + Math.max(0.02, this.camera.position.distanceTo(wp) / TRACER_SPEED[i]);
-        this.pending.push({ at: wArrive, fn: () => this.spawnWell(wp) });
       }
       /* tracer flies at the gun's fixed projectile speed — flight time = distance / speed */
       const fly = Math.max(0.025, this.camera.position.distanceTo(end) / TRACER_SPEED[i]);
@@ -2826,99 +2841,6 @@ export class Game {
       if (p.at <= this.gameT) {
         this.pending.splice(pi, 1);
         p.fn();
-      }
-    }
-  }
-
-  /* EL JUEZ void singularity */
-  private spawnWell(pos: THREE.Vector3) {
-    this.wells.push({ pos: pos.clone(), t: 0.7, dur: 0.7 });
-    this.spawnRing(pos, 0xc05aff, 5.5, 0.7);
-    this.spawnRing(pos, 0xffffff, 2.6, 0.3);
-    this.miniFireball(pos, 1.3, 0.3);
-    this.fireEventLight(pos.x, pos.y + 0.5, pos.z, 0xc05aff, 200, 0.55);
-    this.burst(pos, 0xc05aff, 12, 4.5);
-    sfx.well();
-  }
-
-  private updateWells(dt: number) {
-    for (let wi = this.wells.length - 1; wi >= 0; wi--) {
-      const wl = this.wells[wi];
-      wl.t -= dt;
-      if (wl.t <= 0) {
-        /* the singularity collapses — implosion flash */
-        this.wells.splice(wi, 1);
-        this.miniFireball(wl.pos, 2.1, 0.24);
-        this.spawnRing(wl.pos, 0xc05aff, 4, 0.35);
-        this.burst(wl.pos, 0xe8c8ff, 10, 5.5);
-        this.fireEventLight(wl.pos.x, wl.pos.y + 0.6, wl.pos.z, 0xc05aff, 160, 0.3);
-        sfx.well();
-        continue;
-      }
-      const strength = 10 * (wl.t / wl.dur);
-      for (const e of this.enemies) {
-        if (e.dying) continue;
-        const gp = e.group.position;
-        const dx = wl.pos.x - gp.x;
-        const dz = wl.pos.z - gp.z;
-        const d = Math.hypot(dx, dz);
-        if (d > 0.6 && d < 5.5) {
-          gp.x += (dx / d) * strength * dt;
-          gp.z += (dz / d) * strength * dt;
-        }
-      }
-      /* vortex: matter spirals inward */
-      for (let s = 0; s < 2; s++) {
-        const p = this.particles[this.pIndex];
-        this.pIndex = (this.pIndex + 1) % this.particles.length;
-        const a = rand(0, Math.PI * 2);
-        const r = rand(2.4, 4.2);
-        p.active = true;
-        p.pos.set(wl.pos.x + Math.cos(a) * r, rand(0.2, 2.2), wl.pos.z + Math.sin(a) * r);
-        const ix = wl.pos.x - p.pos.x;
-        const iz = wl.pos.z - p.pos.z;
-        const il = Math.hypot(ix, iz) || 1;
-        p.vel.set((ix / il) * rand(3.5, 6) - (iz / il) * 2.4, rand(-0.4, 0.8), (iz / il) * rand(3.5, 6) + (ix / il) * 2.4);
-        p.maxLife = p.life = rand(0.3, 0.55);
-        p.size = rand(0.4, 0.8);
-        p.color.set(Math.random() > 0.5 ? 0xc05aff : 0xe8c8ff);
-        p.grav = 0;
-      }
-      /* violet arcs lash from the rim into the core */
-      if (Math.random() < 0.5) {
-        const a = rand(0, Math.PI * 2);
-        const from = this.v1.set(wl.pos.x + Math.cos(a) * 3.2, rand(0.3, 2), wl.pos.z + Math.sin(a) * 3.2);
-        const to = this.v3.set(wl.pos.x + rand(-0.2, 0.2), rand(0.4, 1), wl.pos.z + rand(-0.2, 0.2));
-        this.fireTracer(from.clone(), to.clone(), 0.8, 0xd88aff, 0.06);
-      }
-    }
-  }
-
-  /* BOOMSTICK PRIME cluster submunitions */
-  private updateClusters(dt: number) {
-    for (let ci = this.clusters.length - 1; ci >= 0; ci--) {
-      const c = this.clusters[ci];
-      c.t -= dt;
-      if (c.t > 0) continue;
-      this.clusters.splice(ci, 1);
-      const p = c.pos;
-      sfx.boom();
-      sfx.crack();
-      this.shake += 0.4;
-      this.miniFireball(p, 2.3, 0.32);
-      this.spawnRing(p, 0xffd2a0, 6.5, 0.4);
-      this.spawnRing(p, 0xffc040, 3.6, 0.28);
-      this.fireEventLight(p.x, p.y + 1, p.z, 0xffc040, 220, 0.35);
-      this.burst(p, 0xffc040, 14, 7.5);
-      this.burst(this.v1.set(p.x, p.y + 0.4, p.z), 0x3a3632, 6, 2.2, 1.4);
-      this.spawnDecal(this.v3.set(p.x, 0.02, p.z), this.v2.set(0, 1, 0), 0x100c08, 1.8, 11);
-      for (const e of [...this.enemies]) {
-        if (e.dying) continue;
-        const ep = e.group.position;
-        const d = Math.hypot(ep.x - p.x, ep.z - p.z);
-        if (d < 3.6) {
-          this.damageEnemy(e, Math.round(70 * (1 - (d / 3.6) * 0.5)), this.v1.set(ep.x, 1.2, ep.z), false, 3);
-        }
       }
     }
   }
@@ -3512,34 +3434,67 @@ export class Game {
   }
 
   private explodeRocket(at: THREE.Vector3) {
+    const prime = this.upgraded[3];
     sfx.boom();
     sfx.crack();
     sfx.rumble();
-    this.shake += 0.9;
-    this.shakeR += 0.06;
-    this.freeze = Math.max(this.freeze, 0.075);
-    this.fovKick += 1.8;
     hud.set({ boomId: hud.get().boomId + 1 });
-    /* fireball: three stacked churning shells — core, mid, outer */
-    this.fireExplosion(at);
-    /* rising fire column + spreading ground fire */
-    this.firePillar(at);
-    this.fireDisk(at);
-    /* shockwaves: inner flash, main pressure wall, delayed dust + outer pressure */
-    this.spawnRing(at, 0xfff2c8, 5.5, 0.3);
-    this.spawnRing(at, 0xffd2a0, 14, 0.55);
-    this.spawnRing(at, 0xd8b27a, 10, 0.7, 0.12);
-    this.spawnRing(at, 0xff9a5a, 17, 0.9, 0.22);
-    /* twin light surge — fireball lift + ground scorch */
-    this.fireEventLight(at.x, at.y + 2, at.z, 0xffa030, 420, 0.55);
-    this.fireEventLight(at.x, at.y + 0.6, at.z, 0xff5a1a, 220, 0.35);
-    /* debris: fire sparks, fast embers, drifting embers, slow heavy smoke */
-    this.burst(at, 0xff9a2a, 24, 9);
-    this.burst(at, 0xffc040, 16, 11);
-    this.embers(this.v3.set(at.x, at.y + 0.5, at.z), 16);
-    this.burst(this.v3.set(at.x, at.y + 0.4, at.z), 0x3a3632, 18, 2.6, 1.5);
-    this.spawnDecal(this.v3.set(at.x, 0.02, at.z), this.v2.set(0, 1, 0), 0x100c08, 3.0, 14);
-    const R = this.upgraded[3] ? 8.5 : 7.2;
+
+    if (prime) {
+      /* BOOMSTICK PRIME — the golden warhead: a much bigger, far more spectacular blast */
+      sfx.rumble();
+      this.shake += 1.05;
+      this.shakeR += 0.08;
+      this.freeze = Math.max(this.freeze, 0.09);
+      this.fovKick += 2.4;
+      this.fireExplosionPrime(at);
+      this.firePillar(at, 16, 0.75);
+      this.fireDisk(at, 10.5, 1.0);
+      /* layered shockwaves: white core, golden wall, secondary gold, dust, far pressure */
+      this.spawnRing(at, 0xffffff, 6, 0.3);
+      this.spawnRing(at, 0xffd860, 16, 0.6);
+      this.spawnRing(at, 0xffb020, 8.5, 0.45, 0.3);
+      this.spawnRing(at, 0xd8b27a, 12, 0.8, 0.12);
+      this.spawnRing(at, 0xffc040, 21, 1.0, 0.24);
+      /* triple light surge — crown, flash, ground scorch */
+      this.fireEventLight(at.x, at.y + 2.5, at.z, 0xffd060, 520, 0.6);
+      this.fireEventLight(at.x, at.y + 1, at.z, 0xffffff, 300, 0.35);
+      this.fireEventLight(at.x, at.y + 0.5, at.z, 0xffa030, 260, 0.45);
+      /* heavy debris: gold sparks, fast embers, drifting embers, thick smoke */
+      this.burst(at, 0xffd860, 28, 10);
+      this.burst(at, 0xffc040, 20, 12.5);
+      this.embers(this.v3.set(at.x, at.y + 0.5, at.z), 26);
+      this.burst(this.v3.set(at.x, at.y + 0.4, at.z), 0x3a3632, 20, 2.8, 1.5);
+      this.spawnDecal(this.v3.set(at.x, 0.02, at.z), this.v2.set(0, 1, 0), 0x100c08, 3.6, 16);
+    } else {
+      this.shake += 0.9;
+      this.shakeR += 0.06;
+      this.freeze = Math.max(this.freeze, 0.075);
+      this.fovKick += 1.8;
+      /* fireball: three stacked churning shells — core, mid, outer */
+      this.fireExplosion(at);
+      /* rising fire column + spreading ground fire */
+      this.firePillar(at);
+      this.fireDisk(at);
+      /* shockwaves: inner flash, main pressure wall, delayed dust + outer pressure */
+      this.spawnRing(at, 0xfff2c8, 5.5, 0.3);
+      this.spawnRing(at, 0xffd2a0, 14, 0.55);
+      this.spawnRing(at, 0xd8b27a, 10, 0.7, 0.12);
+      this.spawnRing(at, 0xff9a5a, 17, 0.9, 0.22);
+      /* twin light surge — fireball lift + ground scorch */
+      this.fireEventLight(at.x, at.y + 2, at.z, 0xffa030, 420, 0.55);
+      this.fireEventLight(at.x, at.y + 0.6, at.z, 0xff5a1a, 220, 0.35);
+      /* debris: fire sparks, fast embers, drifting embers, slow heavy smoke */
+      this.burst(at, 0xff9a2a, 24, 9);
+      this.burst(at, 0xffc040, 16, 11);
+      this.embers(this.v3.set(at.x, at.y + 0.5, at.z), 16);
+      this.burst(this.v3.set(at.x, at.y + 0.4, at.z), 0x3a3632, 18, 2.6, 1.5);
+      this.spawnDecal(this.v3.set(at.x, 0.02, at.z), this.v2.set(0, 1, 0), 0x100c08, 3.0, 14);
+      this.fovKick += 2.2;
+    }
+
+    /* blast damage — PRIME has a noticeably larger radius */
+    const R = prime ? 10 : 7.2;
     const rdmg = this.effDmg(3);
     for (const e of [...this.enemies]) {
       if (e.dying) continue;
@@ -3552,21 +3507,31 @@ export class Game {
     /* backblast — respect the blast radius, tex */
     const pd = Math.hypot(this.pos.x - at.x, this.pos.z - at.z);
     if (pd < R) this.damagePlayer(Math.round(22 * (1 - pd / R)), "BOOMSTICK BACKBLAST");
-    this.fovKick += 2.2;
-    /* BOOMSTICK PRIME: cluster warheads visibly split into 3 arcing darts */
-    if (this.upgraded[3]) {
-      for (let c = 0; c < 3; c++) {
-        const a = rand(0, Math.PI * 2);
-        const rr = rand(2.2, 3.9);
-        const sub = new THREE.Vector3(at.x + Math.cos(a) * rr, Math.max(0.2, at.y), at.z + Math.sin(a) * rr);
-        const delay = 0.12 + c * 0.11;
-        this.clusters.push({ pos: sub, t: delay });
-        /* glowing dart streaks out to the submunition point, detonating on arrival */
-        const arc = at.clone();
-        arc.y += 1.6;
-        this.fireTracer(arc, sub, 2.2, 0xffc040, delay);
-      }
-      this.burst(at, 0xffc040, 10, 6);
+  }
+
+  /* PRIME golden warhead — four counter-rotating shells, bigger and hotter */
+  private fireExplosionPrime(pos: THREE.Vector3) {
+    /* max, dur, rise, spin, peak, tint */
+    const layers: [number, number, number, number, number, number][] = [
+      [8.0, 0.55, 4.0, 5.0, 1.0, 0xffffff],
+      [10.5, 0.68, 3.0, -3.6, 0.9, 0xffd860],
+      [13.0, 0.82, 2.2, 2.6, 0.65, 0xffb020],
+      [15.5, 1.0, 1.6, -2.0, 0.45, 0xff8010],
+    ];
+    for (const L of layers) {
+      let f = this.fireballs.find((x) => x.life <= 0);
+      if (!f) f = this.fireballs[0];
+      f.mesh.visible = true;
+      f.baseY = Math.max(0.4, pos.y);
+      f.mesh.position.set(pos.x, f.baseY, pos.z);
+      f.mesh.scale.set(0.01, 0.01, 0.01);
+      f.mat.color.set(L[5]);
+      f.life = f.dur = L[1];
+      f.max = L[0];
+      f.rise = L[2];
+      f.spin = L[3];
+      f.peak = L[4];
+      f.mesh.rotation.set(rand(0, 3), rand(0, 3), 0);
     }
   }
 
@@ -3880,8 +3845,6 @@ export class Game {
     this.upgraded = [false, false, false, false];
     for (const fx of this.upgradeFX) fx.visible = false;
     for (let mi = 0; mi < this.flashMats.length; mi++) this.flashMats[mi].color.set(0xffffff);
-    this.wells = [];
-    this.clusters = [];
     this.pending = [];
     this.gameT = 0;
     this.shootCd = 0;
@@ -4051,8 +4014,6 @@ export class Game {
       this.updatePending();
       this.updatePlayer(dt);
       this.updateEnemies(dt);
-      this.updateWells(dt);
-      this.updateClusters(dt);
       this.updateProjectiles(dt);
       this.updateRockets(dt);
       this.updatePickups(dt);
