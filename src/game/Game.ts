@@ -2207,7 +2207,7 @@ export class Game {
 
   /* ------------------------------------------------ fx helpers */
 
-  private burst(pos: THREE.Vector3, color: number, count: number, speed: number, grav = 10, grow = 1.6) {
+  private burst(pos: THREE.Vector3, color: number, count: number, speed: number, grav = 10, grow = 1.2) {
     for (let i = 0; i < count; i++) {
       const p = this.particles[this.pIndex];
       this.pIndex = (this.pIndex + 1) % this.particles.length;
@@ -2215,7 +2215,7 @@ export class Game {
       p.pos.copy(pos).add(this.v3.set(rand(-0.2, 0.2), rand(-0.2, 0.2), rand(-0.2, 0.2)));
       p.vel.set(rand(-1, 1), rand(0.2, 1.4), rand(-1, 1)).normalize().multiplyScalar(rand(speed * 0.4, speed));
       p.maxLife = p.life = rand(0.35, 0.75);
-      p.size = rand(0.7, 1.5);
+      p.size = rand(0.35, 0.7);
       p.color.set(color);
       p.grav = grav;
       p.grow = grow;
@@ -2274,10 +2274,10 @@ export class Game {
       p.vel.y += rand(-1.6, 2.6);
       p.vel.z += rand(-2.4, 2.4);
       p.maxLife = p.life = rand(0.16, 0.36);
-      p.size = rand(0.5, 0.95);
-      p.color.set(tint ?? (Math.random() > 0.4 ? 0xffd9a0 : 0xffa050));
+      p.size = rand(0.25, 0.5);
+      p.color.set(tint ?? (Math.random() > 0.4 ? 0x9a8f80 : 0x787068));
       p.grav = -0.6;
-      p.grow = 2.4;
+      p.grow = 1.5;
     }
   }
 
@@ -2293,10 +2293,10 @@ export class Game {
       p.vel.y += rand(-0.8, 1.6);
       p.vel.z += rand(-1.4, 1.4);
       p.maxLife = p.life = rand(0.4, 0.7);
-      p.size = rand(1.1, 1.9);
+      p.size = rand(0.6, 1.0);
       p.color.set(color);
       p.grav = -1.2;
-      p.grow = 2.6;
+      p.grow = 1.7;
     }
   }
 
@@ -3177,7 +3177,7 @@ export class Game {
     if (this.pos.y <= 0) {
       if (!this.onGround && this.vel.y < -6) {
         sfx.land();
-        this.burst(this.v1.set(this.pos.x, 0.15, this.pos.z), 0xc4a06a, 9, 2.6, 10, 2.4);
+        this.burst(this.v1.set(this.pos.x, 0.15, this.pos.z), 0x8a7a5e, 7, 2.6, 10, 1.5);
         this.shake += 0.5;
         this.shakeR += 0.07;
       }
@@ -3210,7 +3210,7 @@ export class Game {
       if (this.stepAcc > (sprint ? 2.3 : 2.9)) {
         this.stepAcc = 0;
         sfx.step();
-        if (Math.random() < 0.35) this.burst(this.v1.set(this.pos.x, 0.05, this.pos.z), 0xc4a06a, 2, 1.1, 10, 2.2);
+        if (Math.random() < 0.35) this.burst(this.v1.set(this.pos.x, 0.05, this.pos.z), 0x8a7a5e, 2, 1.1, 10, 1.4);
       }
     }
 
@@ -3692,9 +3692,9 @@ export class Game {
       p.vel.set(rand(-0.4, 0.4), rand(0.2, 0.7), rand(-0.4, 0.4));
       p.maxLife = p.life = rand(0.3, 0.55);
       p.size = rand(0.7, 1.2);
-      p.color.set(r.gold ? 0xd8a848 : 0x776050);
+      p.color.set(r.gold ? 0x8a6a30 : 0x4a4238);
       p.grav = -1.5;
-      p.grow = 2.4;
+      p.grow = 1.5;
       /* PRIME sheds live embers off the golden exhaust */
       if (r.gold && Math.random() < 0.5) {
         const sp = this.particles[this.pIndex];
@@ -3812,7 +3812,7 @@ export class Game {
         this.dummy.updateMatrix();
         this.pMesh.setMatrixAt(i, this.dummy.matrix);
         /* additive blending: darkening the color to black IS the fade-out */
-        this.pColor.copy(p.color).multiplyScalar(Math.min(1.15, t * 1.9));
+        this.pColor.copy(p.color).multiplyScalar(Math.min(1, t * 1.6));
         this.pMesh.setColorAt(i, this.pColor);
       } else {
         this.dummy.scale.set(0, 0, 0);
