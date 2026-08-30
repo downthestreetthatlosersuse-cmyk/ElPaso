@@ -1,64 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Game } from "./game/Game";
-import { useHud, type Hud, UNLOCK_AT, UPG_NAMES, UPG_SHORT } from "./game/store";
+import { useHud, type Hud, UPG_NAMES, UPG_SHORT } from "./game/store";
 import { initAudio } from "./game/audio";
-
-/* ------------------------------------------------ pixel hero face */
-
-const FACE_ROWS = [
-  "................",
-  "....HHHHHHHH....",
-  "...HHHHHHHHHH...",
-  "...HhHHHHHHhH...",
-  "...SSSSSSSSSS...",
-  "..SSSSSSSSSSSS..",
-  "..GGGGGGGGGGGG..",
-  "..GgGGGGGGGGgG..",
-  "..sSSSSSSSSSSs..",
-  "...SSSsSSsSSS...",
-  "...SSSSMMSSSS...",
-  "...SSCCCCSSESS..",
-  "....sSSSSSSs....",
-  "...JJJJJJJJJJ...",
-  "..JJJJJJJJJJJJ..",
-  "................",
-];
-
-const FACE_COLORS: Record<string, string> = {
-  H: "#ffd94f",
-  h: "#d8a828",
-  S: "#e8b48a",
-  s: "#c9895a",
-  G: "#171722",
-  g: "#3ee6ff",
-  M: "#7a3a28",
-  C: "#b5652f",
-  E: "#ff6a2a",
-  J: "#3a6a8a",
-};
-
-const BLOOD_SPOTS = new Set(["4,4", "5,12", "8,3", "9,11", "12,6", "7,13"]);
-
-function PixelFace({ hurt }: { hurt: boolean }) {
-  const rects: React.ReactNode[] = [];
-  FACE_ROWS.forEach((row, y) => {
-    for (let x = 0; x < row.length; x++) {
-      const ch = row[x];
-      if (ch === ".") continue;
-      const bloody = hurt && BLOOD_SPOTS.has(`${y},${x}`);
-      rects.push(
-        <rect key={`${x}-${y}`} x={x} y={y} width={1} height={1} fill={bloody ? "#c0182c" : FACE_COLORS[ch] ?? "#000"} />
-      );
-    }
-  });
-  return (
-    <div className={`border-2 border-[#f28b1d] bg-[#241432] p-1 ${hurt ? "animate-pulse" : ""}`}>
-      <svg viewBox="0 0 16 16" width={68} height={68} shapeRendering="crispEdges">
-        {rects}
-      </svg>
-    </div>
-  );
-}
 
 /* ------------------------------------------------ HUD pieces */
 
@@ -78,15 +21,6 @@ function Crosshair({ h }: { h: Hud }) {
             style={{ left: -8, top: -8, width: 16, height: 16, border: "2px solid #ffffff", boxShadow: "0 0 8px rgba(255,255,255,0.6)" }}
           />
         )}
-        {h.combo >= 2 && (
-          <div
-            key={h.combo}
-            className="combo-pop absolute left-1/2 font-display text-3xl"
-            style={{ top: "calc(50% + 34px)", color: h.combo >= 4 ? "#ff5a2a" : "#ff9a2a", textShadow: "0 2px 0 #4a180c, 0 0 18px rgba(255,120,30,0.7)" }}
-          >
-            x{Math.min(h.combo, 6)} COMBO
-          </div>
-        )}
       </div>
     </div>
   );
@@ -96,91 +30,29 @@ function InGameHud({ h }: { h: Hud }) {
   const hpColor = h.health > 60 ? "#8dff3a" : h.health > 30 ? "#ffd23f" : "#ff3b30";
   return (
     <>
-      {/* top-left: radar + wave */}
-      <div className="absolute top-3 left-3 flex flex-col gap-2">
-        <div className="hud-panel p-2">
-          <div className="font-crt text-[#f28b1d] text-sm leading-none mb-1 tracking-widest">TAC-MAP</div>
-          <canvas id="radar-canvas" width={132} height={132} className="block" style={{ imageRendering: "pixelated" }} />
-        </div>
-        <div className="hud-panel px-3 py-2">
-          <div className="font-display text-2xl text-[#ffd23f] leading-none">WAVE {String(h.wave).padStart(2, "0")}</div>
-          <div className="font-crt text-lg text-[#8dff3a] leading-tight">HOSTILES: {h.enemiesLeft}</div>
-        </div>
-      </div>
 
-      {/* top-right: score + feed */}
-      <div className="absolute top-3 right-3 flex flex-col items-end gap-2">
-        <div className="hud-panel px-4 py-2 text-right">
-          <div className="font-crt text-[#f28b1d] text-sm tracking-widest leading-none">SCORE</div>
-          <div className="font-crt text-5xl text-[#ffd23f] leading-none">{h.score}</div>
-          <div className="font-crt text-lg text-[#e8d8ff] leading-tight">
-            KILLS {h.kills} <span className="text-[#f28b1d]">·</span> BEST {h.best}
-          </div>
-        </div>
-        <div className="flex flex-col items-end gap-1 pr-1">
-          {h.feed.map((f) => (
-            <div key={f.id} className="feed-in font-crt text-lg leading-none px-2 py-1 bg-[rgba(10,4,16,0.7)] border-l-4" style={{ color: f.color, borderColor: f.color }}>
-              {f.text}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* boss bar */}
-      {h.bossHp > 0 && (
-        <div className="absolute inset-x-0 top-14 flex justify-center pointer-events-none">
-          <div className="hud-panel px-4 py-2 w-[min(560px,80vw)]" style={{ borderColor: "#c05aff" }}>
-            <div className="flex items-baseline justify-between">
-              <span className="font-display text-xl" style={{ color: "#e08aff", textShadow: "0 2px 0 #3a1050" }}>
-                {h.bossName}
-              </span>
-              <span className="font-crt text-lg text-[#c8b8e8]">{Math.round(h.bossHp * 100)}%</span>
-            </div>
-            <div className="h-3.5 border-2 border-[#c05aff] bg-black mt-1">
-              <div
-                className="h-full transition-all duration-150"
-                style={{
-                  width: `${h.bossHp * 100}%`,
-                  background: "linear-gradient(90deg, #7b2fbe, #c05aff)",
-                  boxShadow: "0 0 12px rgba(192,90,255,0.8)",
-                }}
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* banner */}
-      {h.bannerId > 0 && (
-        <div className="absolute inset-x-0 top-[22%] flex justify-center pointer-events-none">
-          <div key={h.bannerId} className="banner-anim text-center" style={{ opacity: 0 }}>
-            <div className="font-display text-6xl md:text-7xl title-chrome leading-none">{h.bannerText}</div>
-            {h.bannerSub && <div className="font-crt text-2xl md:text-3xl text-[#8dff3a] tracking-[0.25em] mt-2">{h.bannerSub}</div>}
-          </div>
-        </div>
-      )}
 
       <Crosshair h={h} />
 
-      {/* bottom bar */}
+      {/* bottom bar — vitals + ammunition, nothing else */}
       <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between gap-3 pointer-events-none">
-        <div className="hud-panel flex items-center gap-3 px-3 py-2">
-          <PixelFace hurt={h.health <= 45} />
-          <div>
-            <div className="font-crt text-[#f28b1d] text-sm tracking-widest leading-none">CONDITION</div>
-            <div className="w-44 h-5 border-2 border-[#f28b1d] bg-black mt-1">
-              <div className="h-full transition-all duration-200" style={{ width: `${h.health}%`, backgroundColor: hpColor }} />
-            </div>
-            <div className="font-crt text-3xl leading-none mt-1" style={{ color: hpColor }}>
-              {h.health}<span className="text-lg text-[#e8d8ff]"> / 100</span>
-            </div>
+        <div className={`hud-panel px-3 py-2 ${h.health <= 30 ? "animate-pulse" : ""}`} style={{ borderColor: hpColor }}>
+          <div className="flex items-baseline gap-2">
+            <span className="font-display text-[11px] tracking-[0.2em]" style={{ color: hpColor }}>VITALS</span>
+            <span className="font-crt text-4xl leading-none" style={{ color: hpColor }}>{h.health}</span>
           </div>
-        </div>
-
-        <div className="hidden md:block font-crt text-lg text-[rgba(242,170,90,0.55)] leading-snug text-center">
-          HOLD THE PLAZA · R RELOAD · 1-4 / WHEEL WEAPONS · SHIFT SPRINT
-          <br />
-          <span className="text-[rgba(141,255,58,0.6)]">EL PASO COUNTY · SECTOR 7 · 480i NTSC</span>
+          <div className="flex gap-[3px] mt-1.5">
+            {Array.from({ length: 20 }, (_, s) => (
+              <span
+                key={s}
+                className="h-4 flex-1 min-w-[7px]"
+                style={{
+                  backgroundColor: s < Math.ceil(h.health / 5) ? hpColor : "rgba(20,10,28,0.9)",
+                  boxShadow: s < Math.ceil(h.health / 5) ? `0 0 6px ${hpColor}66` : "none",
+                }}
+              />
+            ))}
+          </div>
         </div>
 
         <div className="hud-panel px-4 py-2 text-right">
@@ -202,23 +74,6 @@ function InGameHud({ h }: { h: Hud }) {
             ))}
           </div>
           <div className={`font-display text-sm mt-1 ${h.upgrades[h.weaponSlot] ? "text-[#e0b0ff]" : "text-[#8dff3a]"}`}>{h.weapon}</div>
-          {/* evolution progress for the gun in hand */}
-          {!h.upgrades[h.weaponSlot] && (
-            <div className="mt-1.5">
-              <div className="font-crt text-sm text-[#8a78a8] leading-none mb-0.5">
-                EVOLVE: {h.gunKills[h.weaponSlot]}/{UNLOCK_AT[h.weaponSlot]} KILLS
-              </div>
-              <div className="w-full h-1.5 border border-[#5a3a78] bg-black">
-                <div
-                  className="h-full bg-[#c05aff] transition-all duration-200"
-                  style={{ width: `${Math.min(100, (h.gunKills[h.weaponSlot] / UNLOCK_AT[h.weaponSlot]) * 100)}%` }}
-                />
-              </div>
-            </div>
-          )}
-          {h.upgrades[h.weaponSlot] && (
-            <div className="font-crt text-sm text-[#c05aff] leading-none mt-1.5">◆ ALIEN TECH ACTIVE</div>
-          )}
           <div className="leading-none mt-1">
             <span className="font-crt text-7xl" style={{ color: h.mag === 0 ? "#ff3b30" : "#ffd23f" }}>
               {h.mag}
@@ -231,9 +86,7 @@ function InGameHud({ h }: { h: Hud }) {
             <div className="blinker font-crt text-xl text-[#ff5a5a] leading-none mt-1">OUT OF AMMO — FIND A CACHE</div>
           ) : h.mag === 0 ? (
             <div className="blinker font-crt text-xl text-[#ff5a5a] leading-none mt-1">PRESS R</div>
-          ) : (
-            <div className="font-crt text-lg text-[#8a78a8] leading-none mt-1">R = RELOAD</div>
-          )}
+          ) : null}
         </div>
       </div>
     </>
