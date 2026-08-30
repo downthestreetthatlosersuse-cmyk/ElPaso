@@ -67,6 +67,15 @@ const UPG: [number, number, number, number, number][] = [
 ];
 const UPG_TINT = [0x8dff3a, 0xc05aff, 0xb4ff3c, 0xffc040];
 
+/* comet-tail shape per evolved gun: sheath color/core color, widths, tail length.
+   The tail rides on the bullet itself — a fixed-length appendage along its flight
+   path — so it never stretches toward the muzzle or freezes in space. */
+const TRAIL_CFG = [
+  { color: 0x8dff3a, core: 0xd8ffe0, w: 0.06, cw: 0.024, len: 1.5 },
+  { color: 0xc05aff, core: 0xf0e0ff, w: 0.13, cw: 0.05, len: 2.7 },
+  { color: 0xb4ff3c, core: 0xe0ffc0, w: 0.08, cw: 0.03, len: 1.1 },
+];
+
 const WAVE_LINES = [
   "COME GET SOME!",
   "THIS ONE'S FOR EL PASO!",
@@ -150,25 +159,22 @@ interface BeamFX {
   t: number;
 }
 
-/* bespoke projectile wakes for alien-tech guns */
+/* bespoke projectile wakes for alien-tech guns.
+   A wake rides the bullet's fixed world-space trajectory (fire point → impact).
+   It never re-anchors to the gun — instead it lays down short comet segments that
+   fade in place, so it reads as a dissipating tail no matter how the player moves. */
 interface TrailEmitter {
   active: boolean;
   kind: number; /* 0 hive · 1 verdict · 2 acid */
-  gun: number; /* which viewmodel the source end stays glued to */
   from: THREE.Vector3;
   to: THREE.Vector3;
   t0: number;
   dur: number;
-  acc: number;
-}
-
-interface Burn {
-  mesh: THREE.Mesh;
-  mat: THREE.MeshBasicMaterial;
-  life: number;
-  max: number;
-  w: number;
-  emitter: TrailEmitter | null; /* if set, the burn re-flows with the live wake */
+  acc: number; /* particle wake throttle */
+  sheath: THREE.Mesh; /* wide colored glow riding the bullet */
+  sheathMat: THREE.MeshBasicMaterial;
+  core: THREE.Mesh; /* bright inner tail */
+  coreMat: THREE.MeshBasicMaterial;
 }
 
 interface Projectile {
@@ -295,7 +301,6 @@ export class Game {
   private rings: RingFX[] = [];
   private beams: BeamFX[] = [];
   private trailEmitters: TrailEmitter[] = [];
-  private burns: Burn[] = [];
   /* dynamic lighting */
   private eventLights: { light: THREE.PointLight; life: number; max: number; base: number }[] = [];
   private fireLights: THREE.PointLight[] = [];
@@ -1810,21 +1815,9 @@ export class Game {
   }
 
   private initTrails() {
-    for (let i = 0; i < 18; i++) {
-      this.trailEmitters.push({
-        active: false,
-        kind: 0,
-        gun: -1,
-        from: new THREE.Vector3(),
-        to: new THREE.Vector3(),
-        t0: 0,
-        dur: 0.07,
-        acc: 0,
-      });
-    }
-    /* afterglow streaks — burned channels the rounds leave in the air */
-    const burnGeo = new THREE.BoxGeometry(1, 1, 1);
-    for (let i = 0; i < 14; i++) {
+    /* each emitter owns a two-layer comet (sheath + core) that rides its bullet */
+    const segGeo = new THREE.BoxGeometry(1, 1, 1);
+    const makeSeg = () => {
       const mat = new THREE.MeshBasicMaterial({
         color: 0xffffff,
         transparent: true,
@@ -1832,34 +1825,30 @@ export class Game {
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       });
-      const mesh = new THREE.Mesh(burnGeo, mat);
+      const mesh = new THREE.Mesh(segGeo, mat);
       mesh.visible = false;
       mesh.layers.set(2);
       mesh.renderOrder = 7;
       this.scene.add(mesh);
-      this.burns.push({ mesh, mat, life: 0, max: 1, w: 0.1, emitter: null });
+      return { mesh, mat };
+    };
+    for (let i = 0; i < 18; i++) {
+      const sheath = makeSeg();
+      const core = makeSeg();
+      this.trailEmitters.push({
+        active: false,
+        kind: 0,
+        from: new THREE.Vector3(),
+        to: new THREE.Vector3(),
+        t0: 0,
+        dur: 0.07,
+        acc: 0,
+        sheath: sheath.mesh,
+        sheathMat: sheath.mat,
+        core: core.mesh,
+        coreMat: core.mat,
+      });
     }
-  }
-
-  private spawnBurn(from: THREE.Vector3, to: THREE.Vector3, color: number, dur: number, width: number, peak: number, emitter: TrailEmitter | null = null) {
-    let b = this.burns.find((x) => x.life <= 0);
-    if (!b) b = this.burns[0];
-    const len = Math.max(0.2, from.distanceTo(to));
-    b.mesh.position.copy(from).add(to).multiplyScalar(0.5);
-    b.mesh.lookAt(to);
-    b.mesh.scale.set(width, width, len);
-    b.mesh.visible = true;
-    b.mat.color.set(color);
-    b.mat.opacity = peak;
-    b.life = b.max = dur;
-    b.w = width;
-    b.emitter = emitter;
-  }
-
-  /* world position of a gun's muzzle tip — lets live wakes stay glued to the viewmodel */
-  private gunMuzzle(gunIdx: number, out: THREE.Vector3): THREE.Vector3 {
-    const mz = [[0, 0.015, -0.56], [0, 0.035, -0.38], [0, 0.045, -0.46], [0, 0.02, -0.47]][gunIdx];
-    return out.set(mz[0], mz[1], mz[2]).applyMatrix4(this.guns[gunIdx].matrixWorld);
   }
 
   /* ------------------------------------------------ entities */
@@ -2337,24 +2326,20 @@ export class Game {
     tr.mat.opacity = 0.95;
     tr.life = dur;
     /* bespoke wake rides the projectile for its whole flight.
-       The source end stays glued to the firing gun so it re-flows as you move. */
+       The comet tail is anchored to the bullet itself, never the muzzle, so it
+       follows the round's fixed trajectory and dissipates without stretching. */
     if (trail >= 0) {
       let em = this.trailEmitters.find((e) => !e.active);
       if (!em) em = this.trailEmitters[0];
       em.active = true;
       em.kind = trail;
-      em.gun = this.weaponIdx;
       em.from.copy(from);
       em.to.copy(to);
       em.t0 = this.gameT;
       em.dur = Math.max(0.03, dur);
       em.acc = 0;
-      /* burned channel hangs in the air and re-flows with the live wake */
-      if (trail === 0) this.spawnBurn(from, to, 0x8dff3a, 0.14, 0.05, 0.3, em);
-      if (trail === 1) {
-        this.spawnBurn(from, to, 0xc05aff, 0.4, 0.1, 0.42, em);
-        this.spawnBurn(from, to, 0xe8c8ff, 0.28, 0.035, 0.5, em);
-      }
+      em.sheath.visible = true;
+      em.core.visible = true;
     }
   }
 
@@ -3909,17 +3894,42 @@ export class Game {
       const k = (this.gameT - em.t0) / em.dur;
       if (k >= 1) {
         em.active = false;
+        em.sheath.visible = false;
+        em.core.visible = false;
         continue;
       }
-      /* keep the wake's source glued to the firing gun's muzzle, so the
-         streak re-flows naturally as the player moves instead of freezing */
-      if (em.gun >= 0 && em.gun < this.guns.length) {
-        this.gunMuzzle(em.gun, this.v2);
-        em.from.copy(this.v2);
-      }
+      /* comet tail: anchored to the bullet's own position along its fixed
+         trajectory, trailing behind it. Never touches the muzzle, so it neither
+         stretches toward the gun nor freezes in space as the player moves. */
+      const cfg = TRAIL_CFG[em.kind] || TRAIL_CFG[0];
+      const head = this.v1.lerpVectors(em.from, em.to, Math.max(0, k));
+      const dir = this.v2.subVectors(em.to, em.from);
+      const dist = dir.length() || 1;
+      dir.divideScalar(dist);
+      /* shorten + fade as the round nears impact */
+      const tail = cfg.len * (1 - 0.35 * k);
+      const fade = Math.min(1, k / 0.08) * (1 - Math.max(0, (k - 0.72) / 0.28));
+      this.v3.copy(head).addScaledVector(dir, 1); /* aim point ahead of the head */
+      const placeSeg = (
+        mesh: THREE.Mesh,
+        mat: THREE.MeshBasicMaterial,
+        w: number,
+        len: number,
+        color: number,
+        op: number
+      ) => {
+        mesh.position.copy(head).addScaledVector(dir, -len / 2);
+        mesh.lookAt(this.v3);
+        mesh.scale.set(w, w, len);
+        mat.color.set(color);
+        mat.opacity = op;
+        mesh.visible = true;
+      };
+      placeSeg(em.sheath, em.sheathMat, cfg.w, tail, cfg.color, 0.42 * fade);
+      placeSeg(em.core, em.coreMat, cfg.cw, tail * 0.92, cfg.core, 0.6 * fade);
+
       em.acc -= dt;
       if (em.acc > 0) continue;
-      const head = this.v1.lerpVectors(em.from, em.to, Math.max(0, k));
       if (em.kind === 0) {
         /* RATTLER X — hive wake: bright sparks shear off and wink out */
         em.acc = 0.013;
@@ -3964,23 +3974,6 @@ export class Game {
           m.grow = 1.6;
         }
       }
-    }
-    /* afterglow streaks re-flow with their live wake, then freeze and fade */
-    for (const b of this.burns) {
-      if (b.life <= 0) continue;
-      b.life -= dt;
-      if (b.life <= 0) {
-        b.mesh.visible = false;
-        b.emitter = null;
-        continue;
-      }
-      if (b.emitter && b.emitter.active) {
-        const len = Math.max(0.2, b.emitter.from.distanceTo(b.emitter.to));
-        b.mesh.position.copy(b.emitter.from).add(b.emitter.to).multiplyScalar(0.5);
-        b.mesh.lookAt(b.emitter.to);
-        b.mesh.scale.set(b.w, b.w, len);
-      }
-      b.mat.opacity = (b.life / b.max) * 0.5;
     }
   }
 
@@ -4165,11 +4158,10 @@ export class Game {
     for (let mi = 0; mi < this.flashMats.length; mi++) this.flashMats[mi].color.set(0xffffff);
     this.pending = [];
     this.gameT = 0;
-    for (const em of this.trailEmitters) em.active = false;
-    for (const b of this.burns) {
-      b.life = 0;
-      b.mesh.visible = false;
-      b.emitter = null;
+    for (const em of this.trailEmitters) {
+      em.active = false;
+      em.sheath.visible = false;
+      em.core.visible = false;
     }
     this.shootCd = 0;
     this.reloading = false;
