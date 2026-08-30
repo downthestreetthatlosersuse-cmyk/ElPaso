@@ -55,6 +55,9 @@ const STREAKS: [number, string][] = [
   [10, "UNSTOPPABLE"],
 ];
 
+/* fixed projectile speeds (m/s) — tracers and impacts obey real time of flight */
+const TRACER_SPEED = [270, 180, 215, 48];
+
 /* alien-tech evolution stats: [dmg, rate, magSize, reloadTime, spread] */
 const UPG: [number, number, number, number, number][] = [
   [14, 0.062, 44, 1.0, 0.018],
@@ -230,6 +233,9 @@ export class Game {
   private upgradeMats: THREE.MeshBasicMaterial[] = [];
   private wells: { pos: THREE.Vector3; t: number; dur: number }[] = [];
   private clusters: { pos: THREE.Vector3; t: number }[] = [];
+  /* time-of-flight: impacts apply when the bullet arrives, not on trigger pull */
+  private gameT = 0;
+  private pending: { at: number; fn: () => void }[] = [];
   /* killstreak */
   private streakCount = 0;
   private streakT = 0;
@@ -2728,66 +2734,100 @@ export class Game {
           if (e) {
             const headY = e.kind === "brute" || e.kind === "boss" ? 1.95 : 1.5;
             const isHead = h.point.y > e.group.position.y + headY * e.groupBase;
-            this.damageEnemy(e, (isHead ? 1.8 : 1) * dmg * falloffs[used], h.point, isHead, i);
-            /* RATTLER X: emerald energy bolts chain along the pierce line */
-            if (i === 0 && upg) {
-              const exit = h.point.clone();
-              exit.y += 0.15;
-              if (last) {
-                const entry = last.point.clone();
-                entry.y += 0.15;
-                this.fireTracer(entry, exit, 1.1, 0x8dff3a, 0.1);
-              }
-              this.burst(exit, 0x8dff3a, 7, 3.6);
-              this.miniFireball(exit, 0.55, 0.15);
-              if (used >= 1) this.showText(exit.x, exit.y + 0.7, exit.z, `PIERCE ×${used + 1}`, "#8dff3a");
-            }
-            /* PUMPER-X SAURIO: acid shells stack a melt-over-time */
-            if (i === 2 && upg) {
-              e.acidT = 3;
-              e.acidStacks = Math.min(3, e.acidStacks + 1);
-              this.burst(h.point, 0xb4ff3c, 8, 3.4);
-              this.miniFireball(h.point, 0.6, 0.18);
-              this.spawnDecal(
-                this.v3.set(e.group.position.x, 0.02, e.group.position.z),
-                this.v2.set(0, 1, 0),
-                0x6fae1e,
-                rand(0.9, 1.4),
-                3.2
-              );
-              this.showText(h.point.x, h.point.y + 0.5, h.point.z, `ACID ×${e.acidStacks}`, "#b4ff3c");
-              sfx.splat();
-            }
+            /* impact applies when the bullet actually arrives (time of flight) */
+            const arrive = this.gameT + Math.max(0.02, h.distance / TRACER_SPEED[i]);
+            const fdmg = (isHead ? 1.8 : 1) * dmg * falloffs[used];
+            const acid = i === 2 && upg;
+            const gunI = i;
+            const exit = h.point.clone();
+            exit.y += 0.15;
+            const entryPt = last ? last.point.clone() : null;
+            if (entryPt) entryPt.y += 0.15;
+            const usedNow = used;
+            this.pending.push({
+              at: arrive,
+              fn: () => {
+                this.applyBulletHit(e, fdmg, isHead, gunI, acid);
+                /* RATTLER X: emerald energy bolts chain along the pierce line */
+                if (gunI === 0 && this.upgraded[0]) {
+                  if (entryPt) this.fireTracer(entryPt, exit, 1.1, 0x8dff3a, 0.1);
+                  this.burst(exit, 0x8dff3a, 7, 3.6);
+                  this.miniFireball(exit, 0.55, 0.15);
+                  if (usedNow >= 1) this.showText(exit.x, exit.y + 0.7, exit.z, `PIERCE ×${usedNow + 1}`, "#8dff3a");
+                }
+              },
+            });
             last = h;
             used++;
             if (used > pierce) break;
           } else {
-            this.burst(h.point, 0xffb050, 4, 3);
-            if (h.face) {
-              const n = h.face.normal.clone().transformDirection(h.object.matrixWorld);
-              this.spawnDecal(h.point, n, 0x17100c, rand(0.24, 0.5), rand(5, 8));
-            }
+            /* environment impact — sparks + scorch on arrival */
+            const arrive = this.gameT + Math.max(0.02, h.distance / TRACER_SPEED[i]);
+            const pt = h.point.clone();
+            const n = h.face ? h.face.normal.clone().transformDirection(h.object.matrixWorld) : null;
+            this.pending.push({
+              at: arrive,
+              fn: () => {
+                this.burst(pt, 0xffb050, 4, 3);
+                if (n) this.spawnDecal(pt, n, 0x17100c, rand(0.24, 0.5), rand(5, 8));
+              },
+            });
             last = h;
             break;
           }
         }
         end = last ? last.point.clone() : this.camera.position.clone().addScaledVector(dir, 120);
-        /* EL JUEZ: void rounds leave a singularity that drags enemies in */
+        /* EL JUEZ: void rounds leave a singularity where the round lands */
         if (i === 1 && upg) wellAt = end;
       } else {
         end = this.camera.position.clone().addScaledVector(dir, 120);
       }
-      if (wellAt) this.spawnWell(wellAt);
+      if (wellAt) {
+        const wp = wellAt.clone();
+        const wArrive = this.gameT + Math.max(0.02, this.camera.position.distanceTo(wp) / TRACER_SPEED[i]);
+        this.pending.push({ at: wArrive, fn: () => this.spawnWell(wp) });
+      }
+      /* tracer flies at the gun's fixed projectile speed — flight time = distance / speed */
+      const fly = Math.max(0.025, this.camera.position.distanceTo(end) / TRACER_SPEED[i]);
       const trCol = upg ? UPG_TINT[i] : i === 1 ? 0xffb050 : i === 2 ? 0xffc060 : 0xffe2a8;
       if (i === 1) {
-        this.fireTracer(this.muzzleV.clone(), end, 2.4, trCol, 0.1);
+        this.fireTracer(this.muzzleV.clone(), end, 2.4, trCol, fly);
       } else if (i === 2) {
-        this.fireTracer(this.muzzleV.clone(), end, 1.5, trCol, 0.06);
+        this.fireTracer(this.muzzleV.clone(), end, 1.5, trCol, fly);
       } else {
-        this.fireTracer(this.muzzleV.clone(), end, i === 0 && upg ? 1.6 : 1, trCol, 0.07);
+        this.fireTracer(this.muzzleV.clone(), end, i === 0 && upg ? 1.6 : 1, trCol, fly);
       }
     }
     this.hudSync();
+  }
+
+  /* bullet arrives: apply damage + evolution FX at the target's current spot */
+  private applyBulletHit(e: Enemy, dmg: number, isHead: boolean, gun: number, acid: boolean) {
+    if (e.dying) return;
+    const gp = e.group.position;
+    const hp = this.v1.set(gp.x, gp.y + (isHead ? 2.05 : 1.15) * e.groupBase, gp.z);
+    /* PUMPER-X SAURIO: acid shells stack a melt-over-time */
+    if (acid) {
+      e.acidT = 3;
+      e.acidStacks = Math.min(3, e.acidStacks + 1);
+      this.burst(hp, 0xb4ff3c, 8, 3.4);
+      this.miniFireball(hp, 0.6, 0.18);
+      this.spawnDecal(this.v3.set(gp.x, 0.02, gp.z), this.v2.set(0, 1, 0), 0x6fae1e, rand(0.9, 1.4), 3.2);
+      this.showText(hp.x, hp.y + 0.5, hp.z, `ACID ×${e.acidStacks}`, "#b4ff3c");
+      sfx.splat();
+    }
+    this.damageEnemy(e, dmg, hp, isHead, gun);
+  }
+
+  private updatePending() {
+    if (!this.pending.length) return;
+    for (let pi = this.pending.length - 1; pi >= 0; pi--) {
+      const p = this.pending[pi];
+      if (p.at <= this.gameT) {
+        this.pending.splice(pi, 1);
+        p.fn();
+      }
+    }
   }
 
   /* EL JUEZ void singularity */
@@ -3843,6 +3883,8 @@ export class Game {
     for (let mi = 0; mi < this.flashMats.length; mi++) this.flashMats[mi].color.set(0xffffff);
     this.wells = [];
     this.clusters = [];
+    this.pending = [];
+    this.gameT = 0;
     this.shootCd = 0;
     this.reloading = false;
     this.recoil = 0;
@@ -4006,6 +4048,8 @@ export class Game {
       this.updateLights(dt);
       this.updateExplosions(dt);
     } else if (this.state === "playing") {
+      this.gameT += dt;
+      this.updatePending();
       this.updatePlayer(dt);
       this.updateEnemies(dt);
       this.updateWells(dt);
