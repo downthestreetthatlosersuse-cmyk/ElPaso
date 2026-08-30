@@ -150,6 +150,24 @@ interface BeamFX {
   t: number;
 }
 
+/* bespoke projectile wakes for alien-tech guns */
+interface TrailEmitter {
+  active: boolean;
+  kind: number; /* 0 hive · 1 verdict · 2 acid */
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  t0: number;
+  dur: number;
+  acc: number;
+}
+
+interface Burn {
+  mesh: THREE.Mesh;
+  mat: THREE.MeshBasicMaterial;
+  life: number;
+  max: number;
+}
+
 interface Projectile {
   mesh: THREE.Mesh;
   vel: THREE.Vector3;
@@ -273,6 +291,8 @@ export class Game {
   private decals: Decal[] = [];
   private rings: RingFX[] = [];
   private beams: BeamFX[] = [];
+  private trailEmitters: TrailEmitter[] = [];
+  private burns: Burn[] = [];
   /* dynamic lighting */
   private eventLights: { light: THREE.PointLight; life: number; max: number; base: number }[] = [];
   private fireLights: THREE.PointLight[] = [];
@@ -372,6 +392,7 @@ export class Game {
     this.buildLights();
     this.buildViewmodels();
     this.initPools();
+    this.initTrails();
     this.initDynamicLights();
     this.initExplosions();
     this.bindEvents();
@@ -1785,6 +1806,50 @@ export class Game {
     }
   }
 
+  private initTrails() {
+    for (let i = 0; i < 18; i++) {
+      this.trailEmitters.push({
+        active: false,
+        kind: 0,
+        from: new THREE.Vector3(),
+        to: new THREE.Vector3(),
+        t0: 0,
+        dur: 0.07,
+        acc: 0,
+      });
+    }
+    /* afterglow streaks — burned channels the rounds leave in the air */
+    const burnGeo = new THREE.BoxGeometry(1, 1, 1);
+    for (let i = 0; i < 14; i++) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const mesh = new THREE.Mesh(burnGeo, mat);
+      mesh.visible = false;
+      mesh.layers.set(2);
+      mesh.renderOrder = 7;
+      this.scene.add(mesh);
+      this.burns.push({ mesh, mat, life: 0, max: 1 });
+    }
+  }
+
+  private spawnBurn(from: THREE.Vector3, to: THREE.Vector3, color: number, dur: number, width: number, peak: number) {
+    let b = this.burns.find((x) => x.life <= 0);
+    if (!b) b = this.burns[0];
+    const len = Math.max(0.2, from.distanceTo(to));
+    b.mesh.position.copy(from).add(to).multiplyScalar(0.5);
+    b.mesh.lookAt(to);
+    b.mesh.scale.set(width, width, len);
+    b.mesh.visible = true;
+    b.mat.color.set(color);
+    b.mat.opacity = peak;
+    b.life = b.max = dur;
+  }
+
   /* ------------------------------------------------ entities */
 
   private buildEnemy(kind: EnemyKind, x: number, z: number): Enemy {
@@ -2242,7 +2307,7 @@ export class Game {
     t.life = 1;
   }
 
-  private fireTracer(from: THREE.Vector3, to: THREE.Vector3, thick = 1, color = 0xffe2a8, dur = 0.07) {
+  private fireTracer(from: THREE.Vector3, to: THREE.Vector3, thick = 1, color = 0xffe2a8, dur = 0.07, trail = -1) {
     let tr = this.tracers.find((t) => t.life <= 0);
     if (!tr) tr = this.tracers[0];
     tr.from.copy(from);
@@ -2259,12 +2324,29 @@ export class Game {
     tr.mat.color.set(color);
     tr.mat.opacity = 0.95;
     tr.life = dur;
+    /* bespoke wake rides the projectile for its whole flight */
+    if (trail >= 0) {
+      let em = this.trailEmitters.find((e) => !e.active);
+      if (!em) em = this.trailEmitters[0];
+      em.active = true;
+      em.kind = trail;
+      em.from.copy(from);
+      em.to.copy(to);
+      em.t0 = this.gameT;
+      em.dur = Math.max(0.03, dur);
+      em.acc = 0;
+      /* burned channel left hanging in the air */
+      if (trail === 0) this.spawnBurn(from, to, 0x8dff3a, 0.14, 0.05, 0.3);
+      if (trail === 1) {
+        this.spawnBurn(from, to, 0xc05aff, 0.4, 0.1, 0.42);
+        this.spawnBurn(from, to, 0xe8c8ff, 0.28, 0.035, 0.5);
+      }
+    }
   }
 
-  /* muzzle blast: hot gas propelled FORWARD out of the barrel, expanding as it cools */
-  private muzzleBlast(dir: THREE.Vector3, tint: number | null) {
-    const count = tint ? 6 : 4;
-    for (let i = 0; i < count; i++) {
+  /* muzzle blast — identical honest gray smoke on every gun, evolved or not */
+  private muzzleBlast(dir: THREE.Vector3) {
+    for (let i = 0; i < 4; i++) {
       const p = this.particles[this.pIndex];
       this.pIndex = (this.pIndex + 1) % this.particles.length;
       p.active = true;
@@ -2275,29 +2357,17 @@ export class Game {
       p.vel.z += rand(-2.4, 2.4);
       p.maxLife = p.life = rand(0.16, 0.36);
       p.size = rand(0.25, 0.5);
-      p.color.set(tint ?? (Math.random() > 0.4 ? 0x9a8f80 : 0x787068));
+      p.color.set(Math.random() > 0.4 ? 0x9a8f80 : 0x787068);
       p.grav = -0.6;
       p.grow = 1.5;
     }
   }
 
-  /* colored energy gas for evolved guns — jetted downrange in the evolution tint */
-  private tintSmoke(pos: THREE.Vector3, color: number, count: number, dir: THREE.Vector3) {
-    for (let i = 0; i < count; i++) {
-      const p = this.particles[this.pIndex];
-      this.pIndex = (this.pIndex + 1) % this.particles.length;
-      p.active = true;
-      p.pos.copy(pos).add(this.v3.set(rand(-0.1, 0.1), rand(-0.05, 0.1), rand(-0.1, 0.1)));
-      p.vel.copy(dir).multiplyScalar(rand(4.5, 9));
-      p.vel.x += rand(-1.4, 1.4);
-      p.vel.y += rand(-0.8, 1.6);
-      p.vel.z += rand(-1.4, 1.4);
-      p.maxLife = p.life = rand(0.4, 0.7);
-      p.size = rand(0.6, 1.0);
-      p.color.set(color);
-      p.grav = -1.2;
-      p.grow = 1.7;
-    }
+  private allocParticle(): Particle {
+    const p = this.particles[this.pIndex];
+    this.pIndex = (this.pIndex + 1) % this.particles.length;
+    p.active = true;
+    return p;
   }
 
   private spawnDecal(pos: THREE.Vector3, normal: THREE.Vector3, color: number, size: number, life: number) {
@@ -2728,30 +2798,26 @@ export class Game {
     this.muzzleV.set(mz[0], mz[1], mz[2]).applyMatrix4(gun.matrixWorld);
     const fireDir = this.camera.getWorldDirection(new THREE.Vector3());
 
-    /* muzzle gas — jetted downrange (never drifts on a fixed world axis) */
-    this.muzzleBlast(fireDir, upg ? UPG_TINT[i] : null);
+    /* muzzle gas — same honest gray smoke on every gun, evolved or not */
+    this.muzzleBlast(fireDir);
 
-    /* ALIEN-TECH FIRING SIGNATURES — big, unmistakable, in the gun's tint. */
+    /* ALIEN-TECH FIRING SIGNATURE — the light washes the street in the evolution
+       color and a flash ring pops; the PROJECTILE carries the bespoke wake. */
     if (upg) {
       const tint = UPG_TINT[i];
-      /* the muzzle light burns the evolution color, washing the street in it */
       this.gunLight.color.set(tint);
       this.gunLight.intensity = w.kind === "rocket" ? 72 : 55;
       hud.gunFlash(tint);
       if (i === 0) {
         this.spawnRing(this.muzzleV, tint, 1.0, 0.14);
-        this.burst(this.muzzleV, tint, 6, 5);
-        this.tintSmoke(this.muzzleV, tint, 2, fireDir);
+        this.burst(this.muzzleV, 0xd8ffe0, 4, 5);
       } else if (i === 1) {
         this.spawnRing(this.muzzleV, tint, 2.6, 0.24);
-        this.burst(this.muzzleV, 0xd88aff, 8, 5);
-        this.tintSmoke(this.muzzleV, tint, 2, fireDir);
+        this.burst(this.muzzleV, 0xe8c8ff, 5, 5);
       } else if (i === 2) {
-        this.burst(this.muzzleV, tint, 9, 2.2, 6);
-        this.tintSmoke(this.muzzleV, tint, 3, fireDir);
+        this.burst(this.muzzleV, 0xd8ffa0, 6, 3, 5);
       } else {
-        this.burst(this.muzzleV, tint, 7, 4);
-        this.tintSmoke(this.muzzleV, tint, 2, fireDir);
+        this.burst(this.muzzleV, 0xffe8c0, 5, 4);
       }
     } else {
       this.gunLight.color.set(0xffa640);
@@ -2894,17 +2960,19 @@ export class Game {
       /* evolved guns wrap every round in a fat additive energy halo */
       if (upg) this.fireTracer(this.muzzleV.clone(), end, i === 1 ? 4.2 : i === 2 ? 3.4 : 3.0, trCol, fly * 1.2);
       if (i === 1) {
-        this.fireTracer(this.muzzleV.clone(), end, 2.4, trCol, fly);
+        /* EL JUICIO: violet verdict burn trail carves the channel */
+        this.fireTracer(this.muzzleV.clone(), end, 2.4, trCol, fly, upg ? 1 : -1);
         /* EL JUICIO: thin white core burns inside the violet slug */
         if (upg) this.fireTracer(this.muzzleV.clone(), end, 1.0, 0xffffff, fly);
       } else if (i === 2) {
-        this.fireTracer(this.muzzleV.clone(), end, 1.5, trCol, fly);
+        /* PUMPER-X SAURIO: every shell drips acid along its arc */
+        this.fireTracer(this.muzzleV.clone(), end, 1.5, trCol, fly, upg ? 2 : -1);
       } else {
-        this.fireTracer(this.muzzleV.clone(), end, i === 0 && upg ? 1.6 : 1, trCol, fly);
+        this.fireTracer(this.muzzleV.clone(), end, i === 0 && upg ? 1.6 : 1, trCol, fly, upg ? 0 : -1);
         /* RATTLER X: twin hive needles — a pale bolt flies parallel, slightly high */
         if (upg) {
           const off = this.v3.set(0, 0.045, 0);
-          this.fireTracer(this.muzzleV.clone().add(off), end.clone().add(off), 0.7, 0xd8ffe0, fly);
+          this.fireTracer(this.muzzleV.clone().add(off), end.clone().add(off), 0.7, 0xd8ffe0, fly, 0);
         }
       }
     }
@@ -3827,6 +3895,75 @@ export class Game {
     }
   }
 
+  /* bespoke wakes ride each evolved projectile for the length of its flight */
+  private updateTrails(dt: number) {
+    for (const em of this.trailEmitters) {
+      if (!em.active) continue;
+      const k = (this.gameT - em.t0) / em.dur;
+      if (k >= 1) {
+        em.active = false;
+        continue;
+      }
+      em.acc -= dt;
+      if (em.acc > 0) continue;
+      const head = this.v1.lerpVectors(em.from, em.to, Math.max(0, k));
+      if (em.kind === 0) {
+        /* RATTLER X — hive wake: bright sparks shear off and wink out */
+        em.acc = 0.013;
+        const p = this.allocParticle();
+        p.pos.copy(head).add(this.v3.set(rand(-0.08, 0.08), rand(-0.08, 0.08), rand(-0.08, 0.08)));
+        p.vel.set(rand(-1.6, 1.6), rand(-0.5, 1.6), rand(-1.6, 1.6));
+        p.maxLife = p.life = rand(0.15, 0.3);
+        p.size = rand(0.16, 0.3);
+        p.color.set(Math.random() > 0.6 ? 0xd8ffe0 : 0x8dff3a);
+        p.grav = 1;
+        p.grow = 0.8;
+      } else if (em.kind === 1) {
+        /* EL JUEZ — verdict burn: pale plasma wisps cling to the carved channel */
+        em.acc = 0.011;
+        const p = this.allocParticle();
+        p.pos.copy(head).add(this.v3.set(rand(-0.1, 0.1), rand(-0.1, 0.1), rand(-0.1, 0.1)));
+        p.vel.set(rand(-0.4, 0.4), rand(0.2, 0.9), rand(-0.4, 0.4));
+        p.maxLife = p.life = rand(0.25, 0.45);
+        p.size = rand(0.2, 0.38);
+        p.color.set(Math.random() > 0.5 ? 0xd88aff : 0x8a4ad0);
+        p.grav = -0.8;
+        p.grow = 1.4;
+      } else {
+        /* PUMPER-X SAURIO — acid shears off the shell in droplets that fall */
+        em.acc = 0.016;
+        const p = this.allocParticle();
+        p.pos.copy(head);
+        p.vel.set(rand(-0.8, 0.8), rand(0.2, 1.4), rand(-0.8, 0.8));
+        p.maxLife = p.life = rand(0.3, 0.55);
+        p.size = rand(0.14, 0.24);
+        p.color.set(0xb4ff3c);
+        p.grav = 7;
+        p.grow = 0.9;
+        if (Math.random() < 0.3) {
+          const m = this.allocParticle();
+          m.pos.copy(head);
+          m.vel.set(rand(-0.5, 0.5), rand(0, 0.5), rand(-0.5, 0.5));
+          m.maxLife = m.life = rand(0.2, 0.35);
+          m.size = rand(0.3, 0.5);
+          m.color.set(0x6fae2e);
+          m.grav = -0.6;
+          m.grow = 1.6;
+        }
+      }
+    }
+    /* afterglow streaks fade out behind the rounds */
+    for (const b of this.burns) {
+      if (b.life <= 0) continue;
+      b.life -= dt;
+      if (b.life <= 0) {
+        b.mesh.visible = false;
+        continue;
+      }
+      b.mat.opacity = (b.life / b.max) * 0.5;
+    }
+  }
+
   private updateTracers(dt: number) {
     for (const t of this.tracers) {
       if (t.life <= 0) continue;
@@ -4008,6 +4145,11 @@ export class Game {
     for (let mi = 0; mi < this.flashMats.length; mi++) this.flashMats[mi].color.set(0xffffff);
     this.pending = [];
     this.gameT = 0;
+    for (const em of this.trailEmitters) em.active = false;
+    for (const b of this.burns) {
+      b.life = 0;
+      b.mesh.visible = false;
+    }
     this.shootCd = 0;
     this.reloading = false;
     this.recoil = 0;
@@ -4183,6 +4325,7 @@ export class Game {
       this.updateWaves(dt);
       this.updateParticles(dt);
       this.updateTracers(dt);
+      this.updateTrails(dt);
       this.updateTexts(dt);
       this.updateFX(dt);
       this.updateAmbient(dt);
