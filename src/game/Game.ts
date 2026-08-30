@@ -32,7 +32,7 @@ interface WeaponDef {
 const WEAPONS: WeaponDef[] = [
   { name: "RATTLER SMG", kind: "hitscan", dmg: 12, rate: 0.08, magSize: 36, spread: 0.023, pellets: 1, reloadTime: 1.25, recoil: 0.3, kick: 0.05, kickR: 0.02, bloomKick: 0.05, pitchKick: 1.3, rollKick: 0.5, fovKick: 0.4, sound: () => sfx.smg() },
   { name: "JUDGE MAGNUM", kind: "hitscan", dmg: 70, rate: 0.36, magSize: 6, spread: 0.004, pellets: 1, reloadTime: 1.6, recoil: 1.2, kick: 0.16, kickR: 0.11, bloomKick: 0.3, pitchKick: 5.0, rollKick: 2.6, fovKick: 1.6, sound: () => sfx.magnum() },
-  { name: "PUMPER-8", kind: "hitscan", dmg: 12, rate: 0.68, magSize: 8, spread: 0.058, pellets: 8, reloadTime: 1.9, recoil: 0.95, kick: 0.13, kickR: 0.09, bloomKick: 0.36, pitchKick: 4.0, rollKick: 2.2, fovKick: 2.0, sound: () => sfx.shotgun() },
+  { name: "PUMPER-8", kind: "hitscan", dmg: 12, rate: 0.68, magSize: 8, spread: 0.09, pellets: 8, reloadTime: 1.9, recoil: 0.95, kick: 0.13, kickR: 0.09, bloomKick: 0.36, pitchKick: 4.0, rollKick: 2.2, fovKick: 2.0, sound: () => sfx.shotgun() },
   { name: "BOOMSTICK", kind: "rocket", dmg: 150, rate: 0.85, magSize: 1, spread: 0.004, pellets: 1, reloadTime: 2.0, recoil: 1.4, kick: 0.2, kickR: 0.13, bloomKick: 0.45, pitchKick: 6.2, rollKick: 3.2, fovKick: 2.6, sound: () => sfx.launch() },
 ];
 
@@ -2576,17 +2576,41 @@ export class Game {
     /* hitscan — per pellet */
     const baseSpread = w.spread * (1 + this.bloom * 1.15);
     this.camera.getWorldDirection(this.v1);
-    const right = this.v2.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
-    const up = this.v3.set(0, 1, 0);
     const baseDir = this.v1.clone();
     const dir = new THREE.Vector3();
+    /* orthonormal basis around the aim direction — lets multi-pellet guns
+       fan out in a true cone instead of a boxy square scatter */
+    const coneX = new THREE.Vector3();
+    const coneY = new THREE.Vector3();
+    if (w.pellets > 1) {
+      if (Math.abs(baseDir.y) < 0.99) coneX.crossVectors(baseDir, this.v3.set(0, 1, 0)).normalize();
+      else coneX.set(1, 0, 0);
+      coneY.crossVectors(baseDir, coneX).normalize();
+    }
     for (let pi = 0; pi < w.pellets; pi++) {
-      const spread = baseSpread * (w.pellets > 1 ? rand(0.5, 1.25) : 1);
-      dir
-        .copy(baseDir)
-        .addScaledVector(right, (Math.random() - 0.5) * 2 * spread)
-        .addScaledVector(up, (Math.random() - 0.5) * 2 * spread)
-        .normalize();
+      if (w.pellets > 1) {
+        /* traditional shotgun cone: uniform disk → linear widening with range.
+           Sawn-off barrel = wide base cone (baseSpread ~5° half-angle). */
+        const theta = Math.random() * Math.PI * 2;
+        const rr = Math.sqrt(Math.random());
+        const ang = rr * baseSpread;
+        const sinA = Math.sin(ang);
+        const cosA = Math.cos(ang);
+        dir
+          .copy(baseDir)
+          .multiplyScalar(cosA)
+          .addScaledVector(coneX, Math.cos(theta) * sinA)
+          .addScaledVector(coneY, Math.sin(theta) * sinA)
+          .normalize();
+      } else {
+        const right = this.v2.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+        const up = this.v3.set(0, 1, 0);
+        dir
+          .copy(baseDir)
+          .addScaledVector(right, (Math.random() - 0.5) * 2 * baseSpread)
+          .addScaledVector(up, (Math.random() - 0.5) * 2 * baseSpread)
+          .normalize();
+      }
       this.raycaster.set(this.camera.position, dir);
       this.raycaster.far = 170;
       const targets: THREE.Object3D[] = [...this.hitList, ...this.envMeshes];
