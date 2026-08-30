@@ -238,7 +238,7 @@ export class Game {
   private streakCount = 0;
   private streakT = 0;
   /* rockets */
-  private rockets: { g: THREE.Group; vel: THREE.Vector3; active: boolean; life: number; spin: number }[] = [];
+  private rockets: { g: THREE.Group; vel: THREE.Vector3; active: boolean; life: number; spin: number; gold: boolean }[] = [];
   /* feel: fov punch, hitstop, footsteps */
   private fovKick = 0;
   private freeze = 0;
@@ -1736,7 +1736,7 @@ export class Game {
       g.add(glow);
       g.visible = false;
       this.scene.add(g);
-      this.rockets.push({ g, vel: new THREE.Vector3(), active: false, life: 0, spin: 0 });
+      this.rockets.push({ g, vel: new THREE.Vector3(), active: false, life: 0, spin: 0, gold: false });
     }
   }
 
@@ -2662,6 +2662,12 @@ export class Game {
     w.sound();
     if (w.kind !== "rocket") this.casing();
     this.muzzleSmoke(this.weaponIdx === 0 ? 1 : 2);
+    /* alien-tech firing signatures — every evolved shot announces itself at the muzzle */
+    if (upg) {
+      if (i === 0) this.burst(this.muzzleV, 0x8dff3a, 3, 4.5); /* hive sparks */
+      if (i === 1) this.spawnRing(this.muzzleV, 0xc05aff, 1.5, 0.16); /* verdict flash ring */
+      if (i === 2) this.burst(this.muzzleV, 0xb4ff3c, 4, 2.0, 6); /* acid mist, falls fast */
+    }
     this.fovKick += w.fovKick;
     this.gunLight.intensity = w.kind === "rocket" ? 55 : this.gunLight.intensity;
 
@@ -2728,8 +2734,8 @@ export class Game {
       const hits = this.raycaster.intersectObjects(targets, false);
       let end: THREE.Vector3;
       if (hits.length > 0) {
-        /* RATTLER X: 3 targets w/ falloff. EL JUICIO: rails through ALL, full damage. */
-        const pierce = i === 0 && upg ? 3 : i === 1 && upg ? 99 : 0;
+        /* EL JUICIO: rails through ALL targets, full damage. RATTLER X ricochets instead. */
+        const pierce = i === 1 && upg ? 99 : 0;
         const falloffs = [1, 0.75, 0.55, 0.4];
         let used = 0;
         let last: THREE.Intersection | null = null;
@@ -2752,12 +2758,11 @@ export class Game {
               at: arrive,
               fn: () => {
                 this.applyBulletHit(e, fdmg, isHead, gunI, acid);
-                /* RATTLER X: emerald energy bolts chain along the pierce line */
+                /* RATTLER X: hive round ricochets to nearby enemies on impact */
                 if (gunI === 0 && this.upgraded[0]) {
-                  if (entryPt) this.fireTracer(entryPt, exit, 1.1, 0x8dff3a, 0.1);
-                  this.burst(exit, 0x8dff3a, 7, 3.6);
-                  this.miniFireball(exit, 0.55, 0.15);
-                  if (usedNow >= 1) this.showText(exit.x, exit.y + 0.7, exit.z, `PIERCE ×${usedNow + 1}`, "#8dff3a");
+                  this.burst(exit, 0x8dff3a, 6, 3.6);
+                  this.miniFireball(exit, 0.5, 0.14);
+                  this.ricochet(e, exit, Math.round(fdmg * 0.75), 3);
                 }
                 /* EL JUICIO: violet discharge erupts where the rail slug exits */
                 if (gunI === 1 && this.upgraded[1]) {
@@ -2814,10 +2819,17 @@ export class Game {
       const trCol = upg ? UPG_TINT[i] : i === 1 ? 0xffb050 : i === 2 ? 0xffc060 : 0xffe2a8;
       if (i === 1) {
         this.fireTracer(this.muzzleV.clone(), end, 2.4, trCol, fly);
+        /* EL JUICIO: thin white core burns inside the violet slug */
+        if (upg) this.fireTracer(this.muzzleV.clone(), end, 1.0, 0xffffff, fly);
       } else if (i === 2) {
         this.fireTracer(this.muzzleV.clone(), end, 1.5, trCol, fly);
       } else {
         this.fireTracer(this.muzzleV.clone(), end, i === 0 && upg ? 1.6 : 1, trCol, fly);
+        /* RATTLER X: twin hive needles — a pale bolt flies parallel, slightly high */
+        if (upg) {
+          const off = this.v3.set(0, 0.045, 0);
+          this.fireTracer(this.muzzleV.clone().add(off), end.clone().add(off), 0.7, 0xd8ffe0, fly);
+        }
       }
     }
     this.hudSync();
@@ -2839,6 +2851,47 @@ export class Game {
       sfx.splat();
     }
     this.damageEnemy(e, dmg, hp, isHead, gun);
+  }
+
+  /* RATTLER X hive round: chain-bounces to the nearest enemy with an emerald arc */
+  private ricochet(from: Enemy, fromPt: THREE.Vector3, dmg: number, bounces: number) {
+    if (bounces <= 0 || dmg < 2) return;
+    let best: Enemy | null = null;
+    let bd = 8.5;
+    for (const e of this.enemies) {
+      if (e === from || e.dying) continue;
+      const gp = e.group.position;
+      const d = Math.hypot(gp.x - fromPt.x, gp.z - fromPt.z);
+      if (d < bd) {
+        bd = d;
+        best = e;
+      }
+    }
+    if (!best) return;
+    const tp = new THREE.Vector3(
+      best.group.position.x,
+      best.group.position.y + 1.15 * best.groupBase,
+      best.group.position.z
+    );
+    /* emerald hive-lightning arc between hosts */
+    this.fireTracer(fromPt.clone(), tp.clone(), 1.3, 0x8dff3a, 0.08);
+    this.fireTracer(fromPt.clone(), tp.clone(), 0.6, 0xd8ffe0, 0.06);
+    this.burst(tp, 0x8dff3a, 6, 3.2);
+    sfx.ric();
+    const n = 4 - bounces;
+    this.showText(tp.x, tp.y + 0.6, tp.z, `RICO ×${n}`, "#8dff3a");
+    this.damageEnemy(best, dmg, tp, false, 0);
+    if (bounces > 1) {
+      const next = best;
+      const np = tp.clone();
+      const nd = Math.round(dmg * 0.65);
+      this.pending.push({
+        at: this.gameT + 0.055,
+        fn: () => {
+          if (!next.dying) this.ricochet(next, np, nd, bounces - 1);
+        },
+      });
+    }
   }
 
   private updatePending() {
@@ -3438,6 +3491,12 @@ export class Game {
     r.g.position.copy(this.muzzleV);
     r.vel.copy(this.v1).multiplyScalar(48);
     r.g.quaternion.setFromUnitVectors(this.v2.set(0, 1, 0), this.v1);
+    /* BOOMSTICK PRIME: golden warhead launch — ring + spark burst + gold exhaust */
+    r.gold = this.upgraded[3];
+    if (r.gold) {
+      this.spawnRing(this.muzzleV, 0xffc040, 2.0, 0.22);
+      this.burst(this.muzzleV, 0xffd860, 6, 3.5);
+    }
   }
 
   private explodeRocket(at: THREE.Vector3) {
@@ -3557,8 +3616,20 @@ export class Game {
       p.vel.set(rand(-0.4, 0.4), rand(0.2, 0.7), rand(-0.4, 0.4));
       p.maxLife = p.life = rand(0.3, 0.55);
       p.size = rand(0.7, 1.2);
-      p.color.set(0x8a8a8a);
+      p.color.set(r.gold ? 0xd8a848 : 0x8a8a8a);
       p.grav = -1.5;
+      /* PRIME sheds live embers off the golden exhaust */
+      if (r.gold && Math.random() < 0.5) {
+        const sp = this.particles[this.pIndex];
+        this.pIndex = (this.pIndex + 1) % this.particles.length;
+        sp.active = true;
+        sp.pos.copy(r.g.position);
+        sp.vel.set(rand(-1.2, 1.2), rand(-0.5, 1), rand(-1.2, 1.2));
+        sp.maxLife = sp.life = rand(0.2, 0.4);
+        sp.size = rand(0.3, 0.5);
+        sp.color.set(0xffd860);
+        sp.grav = 2;
+      }
 
       const rp = r.g.position;
       let boom: THREE.Vector3 | null = null;
@@ -3870,6 +3941,7 @@ export class Game {
     for (const r of this.rockets) {
       r.active = false;
       r.g.visible = false;
+      r.gold = false;
     }
     for (let g = 0; g < this.guns.length; g++) this.guns[g].visible = g === 0;
     this.hudSync();
