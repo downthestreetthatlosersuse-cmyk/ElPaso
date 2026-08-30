@@ -174,6 +174,7 @@ interface Particle {
   size: number;
   color: THREE.Color;
   grav: number;
+  grow: number;
 }
 
 interface Tracer {
@@ -331,6 +332,7 @@ export class Game {
   private v1 = new THREE.Vector3();
   private v2 = new THREE.Vector3();
   private v3 = new THREE.Vector3();
+  private pColor = new THREE.Color();
   private attractT = 0;
 
   /* shared geometry / materials */
@@ -449,7 +451,6 @@ export class Game {
     this.geo.spitBody = new THREE.ConeGeometry(0.6, 1.4, 8);
     this.geo.sac = new THREE.SphereGeometry(0.3, 8, 6);
     this.geo.shadow = new THREE.CircleGeometry(0.7, 12);
-    this.geo.particle = new THREE.BoxGeometry(0.14, 0.14, 0.14);
   }
 
   /* -------------------------------------------- procedural pixel textures */
@@ -694,6 +695,7 @@ export class Game {
       dashes.setMatrixAt(di++, this.dummy.matrix);
     }
     dashes.count = di;
+    dashes.frustumCulled = false;
     this.scene.add(dashes);
 
     /* plaza */
@@ -1560,12 +1562,54 @@ export class Game {
     }
   }
 
+  /* soft radial puff sprite — every particle reads as gas/ember, never a cube */
+  private makePuffTexture(): THREE.CanvasTexture {
+    const c = document.createElement("canvas");
+    c.width = c.height = 64;
+    const g = c.getContext("2d")!;
+    g.clearRect(0, 0, 64, 64);
+    const grad = g.createRadialGradient(32, 32, 1, 32, 32, 31);
+    grad.addColorStop(0, "rgba(255,255,255,1)");
+    grad.addColorStop(0.35, "rgba(255,255,255,0.75)");
+    grad.addColorStop(0.7, "rgba(255,255,255,0.25)");
+    grad.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 64, 64);
+    /* organic blotches break the perfect circle */
+    for (let i = 0; i < 10; i++) {
+      const a = rand(0, Math.PI * 2);
+      const r = rand(4, 18);
+      const x = 32 + Math.cos(a) * r;
+      const y = 32 + Math.sin(a) * r;
+      const bg = g.createRadialGradient(x, y, 0, x, y, rand(5, 10));
+      bg.addColorStop(0, "rgba(255,255,255,0.5)");
+      bg.addColorStop(1, "rgba(255,255,255,0)");
+      g.fillStyle = bg;
+      g.fillRect(0, 0, 64, 64);
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.minFilter = THREE.LinearFilter;
+    t.magFilter = THREE.LinearFilter;
+    t.generateMipmaps = false;
+    return t;
+  }
+
   private initPools() {
-    /* particles */
-    const pMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-    this.pMesh = new THREE.InstancedMesh(this.geo.particle, pMat, 320);
+    /* particles — camera-facing additive puffs; color darkens to black to fade out */
+    const puffGeo = new THREE.PlaneGeometry(1, 1);
+    const pMat = new THREE.MeshBasicMaterial({
+      map: this.makePuffTexture(),
+      color: 0xffffff,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    this.pMesh = new THREE.InstancedMesh(puffGeo, pMat, 320);
     this.pMesh.layers.set(2);
     this.pMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    /* the pool roams the whole arena — never let the frustum cull it */
+    this.pMesh.frustumCulled = false;
+    this.pMesh.renderOrder = 6;
     this.dummy.scale.set(0, 0, 0);
     this.dummy.updateMatrix();
     const black = new THREE.Color(0x000000);
@@ -1581,6 +1625,7 @@ export class Game {
         size: 1,
         color: new THREE.Color(),
         grav: 9,
+        grow: 1.6,
       });
     }
     this.scene.add(this.pMesh);
@@ -2162,7 +2207,7 @@ export class Game {
 
   /* ------------------------------------------------ fx helpers */
 
-  private burst(pos: THREE.Vector3, color: number, count: number, speed: number, grav = 10) {
+  private burst(pos: THREE.Vector3, color: number, count: number, speed: number, grav = 10, grow = 1.6) {
     for (let i = 0; i < count; i++) {
       const p = this.particles[this.pIndex];
       this.pIndex = (this.pIndex + 1) % this.particles.length;
@@ -2173,21 +2218,8 @@ export class Game {
       p.size = rand(0.7, 1.5);
       p.color.set(color);
       p.grav = grav;
+      p.grow = grow;
     }
-  }
-
-  private casing() {
-    const p = this.particles[this.pIndex];
-    this.pIndex = (this.pIndex + 1) % this.particles.length;
-    this.guns[this.weaponIdx].getWorldPosition(this.v1);
-    p.active = true;
-    p.pos.copy(this.v1);
-    const right = this.v2.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
-    p.vel.copy(right).multiplyScalar(rand(1.5, 2.6)).add(this.v3.set(0, rand(1.6, 2.4), rand(-0.5, 0.5)));
-    p.maxLife = p.life = rand(0.5, 0.8);
-    p.size = 0.5;
-    p.color.set(0xd8a838);
-    p.grav = 14;
   }
 
   private showText(x: number, y: number, z: number, text: string, color: string) {
@@ -2229,32 +2261,42 @@ export class Game {
     tr.life = dur;
   }
 
-  private muzzleSmoke(count: number) {
+  /* muzzle blast: hot gas propelled FORWARD out of the barrel, expanding as it cools */
+  private muzzleBlast(dir: THREE.Vector3, tint: number | null) {
+    const count = tint ? 6 : 4;
     for (let i = 0; i < count; i++) {
       const p = this.particles[this.pIndex];
       this.pIndex = (this.pIndex + 1) % this.particles.length;
       p.active = true;
-      p.pos.copy(this.muzzleV).add(this.v3.set(rand(-0.05, 0.05), rand(-0.05, 0.05), rand(-0.05, 0.05)));
-      p.vel.set(rand(-0.3, 0.3), rand(0.4, 0.9), rand(-0.5, 0.1));
-      p.maxLife = p.life = rand(0.3, 0.55);
+      p.pos.copy(this.muzzleV).addScaledVector(dir, 0.12).add(this.v3.set(rand(-0.06, 0.06), rand(-0.06, 0.06), rand(-0.06, 0.06)));
+      p.vel.copy(dir).multiplyScalar(rand(8, 17));
+      p.vel.x += rand(-2.4, 2.4);
+      p.vel.y += rand(-1.6, 2.6);
+      p.vel.z += rand(-2.4, 2.4);
+      p.maxLife = p.life = rand(0.16, 0.36);
       p.size = rand(0.5, 0.95);
-      p.color.set(0x9a948c);
-      p.grav = -1.6;
+      p.color.set(tint ?? (Math.random() > 0.4 ? 0xffd9a0 : 0xffa050));
+      p.grav = -0.6;
+      p.grow = 2.4;
     }
   }
 
-  /* lingering colored energy smoke — makes sustained evolved fire unmistakably tinted */
-  private tintSmoke(pos: THREE.Vector3, color: number, count: number) {
+  /* colored energy gas for evolved guns — jetted downrange in the evolution tint */
+  private tintSmoke(pos: THREE.Vector3, color: number, count: number, dir: THREE.Vector3) {
     for (let i = 0; i < count; i++) {
       const p = this.particles[this.pIndex];
       this.pIndex = (this.pIndex + 1) % this.particles.length;
       p.active = true;
       p.pos.copy(pos).add(this.v3.set(rand(-0.1, 0.1), rand(-0.05, 0.1), rand(-0.1, 0.1)));
-      p.vel.set(rand(-0.5, 0.5), rand(0.5, 1.1), rand(-0.6, 0.2));
-      p.maxLife = p.life = rand(0.45, 0.8);
+      p.vel.copy(dir).multiplyScalar(rand(4.5, 9));
+      p.vel.x += rand(-1.4, 1.4);
+      p.vel.y += rand(-0.8, 1.6);
+      p.vel.z += rand(-1.4, 1.4);
+      p.maxLife = p.life = rand(0.4, 0.7);
       p.size = rand(1.1, 1.9);
       p.color.set(color);
       p.grav = -1.2;
+      p.grow = 2.6;
     }
   }
 
@@ -2570,6 +2612,7 @@ export class Game {
       p.size = rand(0.35, 0.6);
       p.color.set(Math.random() > 0.4 ? 0xff9a2a : 0xffd23f);
       p.grav = -1.4;
+      p.grow = 1.2;
     }
   }
 
@@ -2676,8 +2719,6 @@ export class Game {
       this.shake += w.kind === "rocket" ? 0.26 : 0.25;
     }
     w.sound();
-    if (w.kind !== "rocket") this.casing();
-    this.muzzleSmoke(this.weaponIdx === 0 ? 1 : 2);
     this.fovKick += w.fovKick;
     this.gunLight.intensity = w.kind === "rocket" ? 55 : this.gunLight.intensity;
 
@@ -2685,9 +2726,12 @@ export class Game {
     const gun = this.guns[this.weaponIdx];
     const mz = [[0, 0.015, -0.56], [0, 0.035, -0.38], [0, 0.045, -0.46], [0, 0.02, -0.47]][this.weaponIdx];
     this.muzzleV.set(mz[0], mz[1], mz[2]).applyMatrix4(gun.matrixWorld);
+    const fireDir = this.camera.getWorldDirection(new THREE.Vector3());
 
-    /* ALIEN-TECH FIRING SIGNATURES — big, unmistakable, in the gun's tint.
-       Runs at the true muzzle, before the rocket early-return, so PRIME gets it too. */
+    /* muzzle gas — jetted downrange (never drifts on a fixed world axis) */
+    this.muzzleBlast(fireDir, upg ? UPG_TINT[i] : null);
+
+    /* ALIEN-TECH FIRING SIGNATURES — big, unmistakable, in the gun's tint. */
     if (upg) {
       const tint = UPG_TINT[i];
       /* the muzzle light burns the evolution color, washing the street in it */
@@ -2697,17 +2741,17 @@ export class Game {
       if (i === 0) {
         this.spawnRing(this.muzzleV, tint, 1.0, 0.14);
         this.burst(this.muzzleV, tint, 6, 5);
-        this.tintSmoke(this.muzzleV, tint, 2);
+        this.tintSmoke(this.muzzleV, tint, 2, fireDir);
       } else if (i === 1) {
         this.spawnRing(this.muzzleV, tint, 2.6, 0.24);
         this.burst(this.muzzleV, 0xd88aff, 8, 5);
-        this.tintSmoke(this.muzzleV, tint, 2);
+        this.tintSmoke(this.muzzleV, tint, 2, fireDir);
       } else if (i === 2) {
         this.burst(this.muzzleV, tint, 9, 2.2, 6);
-        this.tintSmoke(this.muzzleV, tint, 3);
+        this.tintSmoke(this.muzzleV, tint, 3, fireDir);
       } else {
         this.burst(this.muzzleV, tint, 7, 4);
-        this.tintSmoke(this.muzzleV, tint, 2);
+        this.tintSmoke(this.muzzleV, tint, 2, fireDir);
       }
     } else {
       this.gunLight.color.set(0xffa640);
@@ -3133,7 +3177,7 @@ export class Game {
     if (this.pos.y <= 0) {
       if (!this.onGround && this.vel.y < -6) {
         sfx.land();
-        this.burst(this.v1.set(this.pos.x, 0.15, this.pos.z), 0xc4a06a, 9, 2.6);
+        this.burst(this.v1.set(this.pos.x, 0.15, this.pos.z), 0xc4a06a, 9, 2.6, 10, 2.4);
         this.shake += 0.5;
         this.shakeR += 0.07;
       }
@@ -3166,7 +3210,7 @@ export class Game {
       if (this.stepAcc > (sprint ? 2.3 : 2.9)) {
         this.stepAcc = 0;
         sfx.step();
-        if (Math.random() < 0.35) this.burst(this.v1.set(this.pos.x, 0.05, this.pos.z), 0xc4a06a, 2, 1.1);
+        if (Math.random() < 0.35) this.burst(this.v1.set(this.pos.x, 0.05, this.pos.z), 0xc4a06a, 2, 1.1, 10, 2.2);
       }
     }
 
@@ -3648,8 +3692,9 @@ export class Game {
       p.vel.set(rand(-0.4, 0.4), rand(0.2, 0.7), rand(-0.4, 0.4));
       p.maxLife = p.life = rand(0.3, 0.55);
       p.size = rand(0.7, 1.2);
-      p.color.set(r.gold ? 0xd8a848 : 0x8a8a8a);
+      p.color.set(r.gold ? 0xd8a848 : 0x776050);
       p.grav = -1.5;
+      p.grow = 2.4;
       /* PRIME sheds live embers off the golden exhaust */
       if (r.gold && Math.random() < 0.5) {
         const sp = this.particles[this.pIndex];
@@ -3661,6 +3706,7 @@ export class Game {
         sp.size = rand(0.3, 0.5);
         sp.color.set(0xffd860);
         sp.grav = 2;
+        sp.grow = 1.1;
       }
 
       const rp = r.g.position;
@@ -3756,13 +3802,18 @@ export class Game {
         }
       }
       if (p.active) {
-        const s = p.size * Math.min(1, (p.life / p.maxLife) * 2);
+        const t = p.life / p.maxLife; /* 1 → 0 */
+        /* gas expands as it dies; sparks shrink */
+        const s = Math.max(0.001, p.size * (0.45 + p.grow * (1 - t)));
         this.dummy.position.copy(p.pos);
+        /* billboard: always face the camera so puffs never edge-on vanish */
+        this.dummy.lookAt(this.camera.position);
         this.dummy.scale.set(s, s, s);
-        this.dummy.rotation.set(0, 0, 0);
         this.dummy.updateMatrix();
         this.pMesh.setMatrixAt(i, this.dummy.matrix);
-        this.pMesh.setColorAt(i, p.color);
+        /* additive blending: darkening the color to black IS the fade-out */
+        this.pColor.copy(p.color).multiplyScalar(Math.min(1.15, t * 1.9));
+        this.pMesh.setColorAt(i, this.pColor);
       } else {
         this.dummy.scale.set(0, 0, 0);
         this.dummy.updateMatrix();
